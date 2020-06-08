@@ -220,14 +220,14 @@ int main() {
 
     
     std::vector<double> l_start{0.,0.,0.};   
-    std::vector<double> l_end{1.,1.,.1};
+    std::vector<double> l_end{1.,1.,1.};
     std::vector<int> l_num{nx,ny,nz};
 
     std::vector<double> l_delta(3);
     std::vector<double> l_delta_inv(3);
 
     for (int i=0; i<3; i++){
-        l_delta[i] =  ( l_end[i] - l_start[i] ) / (double)(l_num[i]-3) ;
+        l_delta[i] =  ( l_end[i] - l_start[i] ) / (double)(l_num[i]) ;
         l_delta_inv[i] = 1./l_delta[i];
     }
 
@@ -240,7 +240,7 @@ int main() {
     std::uniform_real_distribution<float> distribution(
         0., //std::numeric_limits<float>::min(),
         1.);//std::numeric_limits<float>::max());
-    std::default_random_engine generator;
+    std::default_random_engine generator(0);
 
     std::generate(coefs.begin(), coefs.end(), [&distribution, &generator]() { return distribution(generator); });
 
