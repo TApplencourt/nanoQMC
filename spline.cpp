@@ -62,10 +62,6 @@ inline static void compute_prefactors(T a[4], T da[4], T d2a[4], T tx)
     static constexpr T d2A12 =  3.0, d2A13 = -2.0;
     static constexpr T d2A22 = -3.0, d2A23 =  1.0;
     static constexpr T d2A32 =  1.0, d2A33 =  0.0;
-    static constexpr T d3A03 = -1.0;
-    static constexpr T d3A13 =  3.0;
-    static constexpr T d3A23 = -3.0;
-    static constexpr T d3A33 =  1.0;
 
     a[0]   = ((A00 * tx + A01) * tx + A02) * tx + A03;
     a[1]   = ((A10 * tx + A11) * tx + A12) * tx + A13;
@@ -194,7 +190,7 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   const float dxz   = dxInv * dzInv;
   const float dyz   = dyInv * dzInv;
 
-  for (int n = 0; n < n_splines; n++)
+  for (size_t n = 0; n < n_splines; n++)
   {
     gx[n] *= dxInv;
     gy[n] *= dyInv;
@@ -219,7 +215,8 @@ int main() {
 
     //Declaration
     int nord = nelectrons  / 2;
-    int n_splines = nord * (nx+3) * (ny+3) * (nz+3);
+    int n_splines = nord;
+    int n_coef = nord * (nx+3) * (ny+3) * (nz+3);
 
     
     std::vector<double> l_start{0.,0.,0.};   
@@ -234,10 +231,10 @@ int main() {
         l_delta_inv[i] = 1./l_delta[i];
     }
 
-    std::vector<float> coefs(n_splines);
+    std::vector<float> coefs(n_coef);
     std::vector<float> vals(n_splines);
-    std::vector<float> grads(n_splines);
-    std::vector<float> hess(n_splines);
+    std::vector<float> grads(n_splines*3);
+    std::vector<float> hess(n_splines*6);
     
     // Put correct value
     std::uniform_real_distribution<float> distribution(
@@ -256,7 +253,11 @@ int main() {
                           coefs.size()} ;
     
     evaluate_vgh(&s, 1., 1., 1., vals.data(), grads.data(), hess.data(), n_splines);
-    std::cout << vals[1] << " " << grads[1] << " " << hess[1] << " " << std::endl;
+    for (int i=0; i<n_splines; i++){
+
+    std::cout << vals[i] << " " << grads[i] << " " << hess[i] << " " << std::endl;
+    }
+    //std::cout << vals[0] << " " << grads[0] << " " << hess[0] << " " << std::endl;
 
     return 0;
 }
