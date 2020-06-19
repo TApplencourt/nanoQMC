@@ -15,3 +15,4 @@ addons:
 script:
   - g++-10 -Wall -Wextra -Werror spline.cpp -o spline cxxopts.hpp
   - ./spline
+  #To do, output 1block == N block for vals, grads, and hessians
