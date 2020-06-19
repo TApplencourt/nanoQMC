@@ -1,0 +1,14 @@
+sudo: false
+language: cpp
+compiler:
+  - gcc
+addons:
+  apt:
+    sources:
+    - sourceline: "ppa:ubuntu-toolchain-r/test"
+      key_url: https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x60c317803a41ba51845e371a1e9377a2ba9ef27f
+    packages:
+    - g++-10
+script:
+  - g++-10 -Wall -Wextra -Werror spline.cpp -o spline
+  - ./spline
