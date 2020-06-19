@@ -3,7 +3,7 @@
 #include <algorithm> // std::fill
 #include <limits>
 #include <random>
-
+#include <numeric>
 
 struct Ugrid
 {
@@ -232,10 +232,15 @@ int main() {
     }
 
     std::vector<float> coefs(n_coef);
-    std::vector<float> vals(n_splines);
-    std::vector<float> grads(n_splines*3);
-    std::vector<float> hess(n_splines*6);
+    std::vector<std::vector<float>> vals(nelectrons, std::vector<float>(n_splines));
+    std::vector<std::vector<float>> grads(nelectrons, std::vector<float>(n_splines*3));
+    std::vector<std::vector<float>> hess(nelectrons, std::vector<float>(n_splines*6));
     
+
+    std::vector<float> electron_pos_x(nelectrons);
+    std::vector<float> electron_pos_y(nelectrons);
+    std::vector<float> electron_pos_z(nelectrons);
+
     // Put correct value
     std::uniform_real_distribution<float> distribution(
         0., //std::numeric_limits<float>::min(),
@@ -243,21 +248,23 @@ int main() {
     std::default_random_engine generator(0);
 
     std::generate(coefs.begin(), coefs.end(), [&distribution, &generator]() { return distribution(generator); });
+    std::generate(electron_pos_x.begin(), electron_pos_x.end(), [&distribution, &generator]() { return distribution(generator); });
+    std::generate(electron_pos_y.begin(), electron_pos_y.end(), [&distribution, &generator]() { return distribution(generator); });
+    std::generate(electron_pos_z.begin(), electron_pos_z.end(), [&distribution, &generator]() { return distribution(generator); });
 
-    auto s = SplineType { coefs.data(), 
-                          1, 1, 1,
-                          Ugrid{ l_start[0], l_end[0], l_num[0], l_delta[0], l_delta_inv[0] },
-                          Ugrid{ l_start[1], l_end[1], l_num[1], l_delta[1], l_delta_inv[1] },
-                          Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
-                          1,
-                          coefs.size()} ;
+    for (int e=0 ; e < nelectrons ; e++){
+        auto s = SplineType { coefs.data(), 
+                              1, 1, 1,
+                              Ugrid{ l_start[0], l_end[0], l_num[0], l_delta[0], l_delta_inv[0] },
+                              Ugrid{ l_start[1], l_end[1], l_num[1], l_delta[1], l_delta_inv[1] },
+                              Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
+                              1,
+                             coefs.size()} ;
     
-    evaluate_vgh(&s, 1., 1., 1., vals.data(), grads.data(), hess.data(), n_splines);
-    for (int i=0; i<n_splines; i++){
-
-    std::cout << vals[i] << " " << grads[i] << " " << hess[i] << " " << std::endl;
+        evaluate_vgh(&s, electron_pos_x[e], electron_pos_y[e], electron_pos_z[e], vals[e].data(), grads[e].data(), hess[e].data(), n_splines);
     }
-    //std::cout << vals[0] << " " << grads[0] << " " << hess[0] << " " << std::endl;
+
+    std::cout << std::accumulate(vals[0].begin(), vals[0].end(), 0.) << std::endl;
 
     return 0;
 }
