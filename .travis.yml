@@ -13,5 +13,5 @@ addons:
     packages:
     - g++-10
 script:
-  - g++-10 -Wall -Wextra -Werror spline.cpp -o spline
+  - g++-10 -Wall -Wextra -Werror spline.cpp -o spline cxxopts.hpp
   - ./spline

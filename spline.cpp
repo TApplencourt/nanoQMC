@@ -4,6 +4,8 @@
 #include <limits>
 #include <random>
 #include <numeric>
+#include <assert.h>     /* assert */
+#include "cxxopts.hpp"
 
 struct Ugrid
 {
@@ -205,19 +207,40 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
 
 }
 
+int main(int argc, char **argv) {
 
-int main() {
+  //  _                ___
+  // |_) _. ._ _  _     |  ._  ._     _|_
+  // |  (_| | _> (/_   _|_ | | |_) |_| |_
+  //                           |
 
-    int nx = 37;
-    int ny = 37;
-    int nz = 37;
-    int nelectrons = 2;
+    cxxopts::Options options("nanoqmc",
+                             "miniapps of miniqmc");
+
+    options.add_options()("h,help", "Print help")(
+      "b,nblock", "Number of bloack", cxxopts::value<int>()->default_value("1"));
+
+    auto result = options.parse(argc, argv);
+
+    if (result.count("help")) {
+      std::cout << options.help({"", "Group"}) << std::endl;
+      exit(0);
+    }
+
+    const int nx = 37;
+    const int ny = 37;
+    const int nz = 37;
+    const int nelectrons = 20;
 
     //Declaration
-    int nord = nelectrons  / 2;
-    int n_splines = nord;
-    int n_coef = nord * (nx+3) * (ny+3) * (nz+3);
+    const int nord = nelectrons  / 2;
+    const int n_splines = nord;
+    const int n_coef = nord * (nx+3) * (ny+3) * (nz+3);
 
+    const int nblock = result["nblock"].as<int>();
+    assert ( n_splines%nblock == 0);
+    
+    const int n_splines_block = n_splines / nblock;
     
     std::vector<double> l_start{0.,0.,0.};   
     std::vector<double> l_end{1.,1.,1.};
@@ -251,20 +274,27 @@ int main() {
     std::generate(electron_pos_x.begin(), electron_pos_x.end(), [&distribution, &generator]() { return distribution(generator); });
     std::generate(electron_pos_y.begin(), electron_pos_y.end(), [&distribution, &generator]() { return distribution(generator); });
     std::generate(electron_pos_z.begin(), electron_pos_z.end(), [&distribution, &generator]() { return distribution(generator); });
-
-    for (int e=0 ; e < nelectrons ; e++){
-        auto s = SplineType { coefs.data(), 
-                              1, 1, 1,
-                              Ugrid{ l_start[0], l_end[0], l_num[0], l_delta[0], l_delta_inv[0] },
-                              Ugrid{ l_start[1], l_end[1], l_num[1], l_delta[1], l_delta_inv[1] },
-                              Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
-                              1,
-                             coefs.size()} ;
     
-        evaluate_vgh(&s, electron_pos_x[e], electron_pos_y[e], electron_pos_z[e], vals[e].data(), grads[e].data(), hess[e].data(), n_splines);
+    
+    for (int e=0 ; e < nelectrons ; e++){
+        for (int b=0; b < nblock; b++) {
+            int offset = b*n_splines_block;
+
+            auto s = SplineType { coefs.data() + offset,
+                                  1, 1, 1,
+                                  Ugrid{ l_start[0], l_end[0], l_num[0], l_delta[0], l_delta_inv[0] },
+                                  Ugrid{ l_start[1], l_end[1], l_num[1], l_delta[1], l_delta_inv[1] },
+                                  Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
+                                  1,
+                                  coefs.size() / 2} ;
+
+            evaluate_vgh(&s, electron_pos_x[e], electron_pos_y[e], electron_pos_z[e], vals[e].data()+offset, grads[e].data()+3*offset, hess[e].data()+6*offset, n_splines_block);
+        }
     }
 
     std::cout << std::accumulate(vals[0].begin(), vals[0].end(), 0.) << std::endl;
+    std::cout << std::accumulate(grads[0].begin(), grads[0].end(), 0.) << std::endl;
+    std::cout << std::accumulate(hess[0].begin(), hess[0].end(), 0.) << std::endl;
 
     return 0;
 }
