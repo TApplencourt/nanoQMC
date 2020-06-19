@@ -1,3 +1,6 @@
+dist: bionic
+os: linux
+
 sudo: false
 language: cpp
 compiler:
