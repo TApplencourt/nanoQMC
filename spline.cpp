@@ -119,6 +119,7 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   const intptr_t zs = spline_m->z_stride;
 
   const size_t out_offset = spline_m->n_splines;
+  //const size_t out_offset = n_splines;
   float* __restrict__ gx = grads;
   float* __restrict__ gy = grads + out_offset;
   float* __restrict__ gz = grads + 2 * out_offset;
@@ -258,6 +259,9 @@ int main(int argc, char **argv) {
     std::vector<std::vector<float>> vals(nelectrons, std::vector<float>(n_splines));
     std::vector<std::vector<float>> grads(nelectrons, std::vector<float>(n_splines*3));
     std::vector<std::vector<float>> hess(nelectrons, std::vector<float>(n_splines*6));
+    //std::vector<std::vector<float>> vals(n_splines, std::vector<float>(nelectrons));
+    //std::vector<std::vector<float>> grads(n_splines*3, std::vector<float>(nelectrons));
+    //std::vector<std::vector<float>> hess(n_splines*6, std::vector<float>(nelectrons));
     
 
     std::vector<float> electron_pos_x(nelectrons);
@@ -285,9 +289,8 @@ int main(int argc, char **argv) {
                                   Ugrid{ l_start[0], l_end[0], l_num[0], l_delta[0], l_delta_inv[0] },
                                   Ugrid{ l_start[1], l_end[1], l_num[1], l_delta[1], l_delta_inv[1] },
                                   Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
-                                  1,
-                                  coefs.size() / 2} ;
-
+                                  n_splines_block,
+                                  coefs.size() } ;
             evaluate_vgh(&s, electron_pos_x[e], electron_pos_y[e], electron_pos_z[e], vals[e].data()+offset, grads[e].data()+3*offset, hess[e].data()+6*offset, n_splines_block);
         }
     }
@@ -295,7 +298,6 @@ int main(int argc, char **argv) {
     std::cout << std::accumulate(vals[0].begin(), vals[0].end(), 0.) << std::endl;
     std::cout << std::accumulate(grads[0].begin(), grads[0].end(), 0.) << std::endl;
     std::cout << std::accumulate(hess[0].begin(), hess[0].end(), 0.) << std::endl;
-
     return 0;
 }
 
