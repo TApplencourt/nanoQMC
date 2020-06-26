@@ -18,8 +18,11 @@ struct Ugrid
 // Removed unused argument. Will need to pad to the correct dimension for more realism
 struct SplineType
 {
+  float* __restrict__ coefs;
   intptr_t x_stride, y_stride, z_stride;
   Ugrid x_grid, y_grid, z_grid;
+  int n_splines;
+  size_t coefs_size;
 };
 
 
@@ -98,7 +101,6 @@ inline void computeLocationAndFractional(
 }
 
 inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
-                         float* __restrict__ coefs_m,
                          float x,
                          float y,
                          float z, 
@@ -116,7 +118,8 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   const intptr_t ys = spline_m->y_stride;
   const intptr_t zs = spline_m->z_stride;
 
-  const size_t out_offset = n_splines;
+  const size_t out_offset = spline_m->n_splines;
+  //const size_t out_offset = n_splines;
   float* __restrict__ gx = grads;
   float* __restrict__ gy = grads + out_offset;
   float* __restrict__ gz = grads + 2 * out_offset;
@@ -128,9 +131,6 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   float* __restrict__ hyz = hess + 4 * out_offset;
   float* __restrict__ hzz = hess + 5 * out_offset;
 
-/*
-  Will do it via allocator.
-  Assume this is always true
   std::fill(vals, vals + n_splines, float());
   std::fill(gx, gx + n_splines, float());
   std::fill(gy, gy + n_splines, float());
@@ -141,12 +141,12 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   std::fill(hyy, hyy + n_splines, float());
   std::fill(hyz, hyz + n_splines, float());
   std::fill(hzz, hzz + n_splines, float());
-*/
+
 
   for (int i = 0; i < 4; i++)
     for (int j = 0; j < 4; j++)
     {
-      const float* __restrict__ coefs =  coefs_m + ((ix + i) * xs + (iy + j) * ys + iz * zs);
+      const float* __restrict__ coefs = spline_m->coefs + ((ix + i) * xs + (iy + j) * ys + iz * zs);
       const float* __restrict__ coefszs = coefs + zs;
       const float* __restrict__ coefs2zs = coefs + 2 * zs;
       const float* __restrict__ coefs3zs = coefs + 3 * zs;
@@ -278,18 +278,19 @@ int main(int argc, char **argv) {
     std::generate(electron_pos_x.begin(), electron_pos_x.end(), [&distribution, &generator]() { return distribution(generator); });
     std::generate(electron_pos_y.begin(), electron_pos_y.end(), [&distribution, &generator]() { return distribution(generator); });
     std::generate(electron_pos_z.begin(), electron_pos_z.end(), [&distribution, &generator]() { return distribution(generator); });
-   
-    auto s = SplineType {  1, 1, 1,
-                           Ugrid{ l_start[0], l_end[0], l_num[0], l_delta[0], l_delta_inv[0] },
-                           Ugrid{ l_start[1], l_end[1], l_num[1], l_delta[1], l_delta_inv[1] },
-                           Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
-                        } ;
-
+    
     // Kernel
     for (int e=0 ; e < nelectrons ; e++){
         for (int b=0; b < nblock; b++) {
             int offset = b*n_splines_block;
-            evaluate_vgh(&s, coefs.data()+offset, electron_pos_x[e], electron_pos_y[e], electron_pos_z[e], vals[e].data()+offset, grads[e].data()+3*offset, hess[e].data()+6*offset, n_splines_block);
+            auto s = SplineType { coefs.data() + offset,
+                                  1, 1, 1,
+                                  Ugrid{ l_start[0], l_end[0], l_num[0], l_delta[0], l_delta_inv[0] },
+                                  Ugrid{ l_start[1], l_end[1], l_num[1], l_delta[1], l_delta_inv[1] },
+                                  Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
+                                  n_splines_block,
+                                  coefs.size() } ;
+            evaluate_vgh(&s, electron_pos_x[e], electron_pos_y[e], electron_pos_z[e], vals[e].data()+offset, grads[e].data()+3*offset, hess[e].data()+6*offset, n_splines_block);
         }
     }
 
