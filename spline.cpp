@@ -6,6 +6,7 @@
 #include <numeric>
 #include <assert.h>     /* assert */
 #include "cxxopts.hpp"
+#include <chrono>
 
 struct Ugrid
 {
@@ -128,20 +129,6 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   float* __restrict__ hyz = hess + 4 * out_offset;
   float* __restrict__ hzz = hess + 5 * out_offset;
 
-/*
-  Will do it via allocator.
-  Assume this is always true
-  std::fill(vals, vals + n_splines, float());
-  std::fill(gx, gx + n_splines, float());
-  std::fill(gy, gy + n_splines, float());
-  std::fill(gz, gz + n_splines, float());
-  std::fill(hxx, hxx + n_splines, float());
-  std::fill(hxy, hxy + n_splines, float());
-  std::fill(hxz, hxz + n_splines, float());
-  std::fill(hyy, hyy + n_splines, float());
-  std::fill(hyz, hyz + n_splines, float());
-  std::fill(hzz, hzz + n_splines, float());
-*/
 
   for (int i = 0; i < 4; i++)
     for (int j = 0; j < 4; j++)
@@ -225,6 +212,7 @@ int main(int argc, char **argv) {
             ("z", "Size of spline z", cxxopts::value<int>()->default_value("37"))
             ("e,", "Number of electron", cxxopts::value<int>()->default_value("20"))
             ("b,nblock", "Number of block", cxxopts::value<int>()->default_value("1"))
+            ("n,niter", "Number of dummy iterations", cxxopts::value<int>()->default_value("1"))
     ;
 
     auto result = options.parse(argc, argv);
@@ -237,7 +225,8 @@ int main(int argc, char **argv) {
     const int nx = result["x"].as<int>();
     const int ny = result["y"].as<int>();
     const int nz = result["z"].as<int>();
-    const int nelectrons =  result["e"].as<int>();;
+    const int nelectrons =  result["e"].as<int>();
+    const int niter = result["n"].as<int>();
 
     //Declaration
     const int nord = nelectrons  / 2;
@@ -270,9 +259,10 @@ int main(int argc, char **argv) {
     std::vector<float> electron_pos_y(nelectrons);
     std::vector<float> electron_pos_z(nelectrons);
 
-    // Put correct value
+    // Put random values
     std::uniform_real_distribution<float> distribution(0.,1.);
-    std::default_random_engine generator(0);
+    std::minstd_rand generator(0);
+
 
     std::generate(coefs.begin(), coefs.end(), [&distribution, &generator]() { return distribution(generator); });
     std::generate(electron_pos_x.begin(), electron_pos_x.end(), [&distribution, &generator]() { return distribution(generator); });
@@ -285,16 +275,31 @@ int main(int argc, char **argv) {
                            Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
                         } ;
 
+    auto start = std::chrono::system_clock::now();
+
     // Kernel
-    for (int e=0 ; e < nelectrons ; e++){
-        for (int b=0; b < nblock; b++) {
-            int offset = b*n_splines_block;
-            evaluate_vgh(&s, coefs.data()+offset, electron_pos_x[e], electron_pos_y[e], electron_pos_z[e], vals[e].data()+offset, grads[e].data()+3*offset, hess[e].data()+6*offset, n_splines_block);
-        }
+    for (int i=0; i< niter; i++) {
+      for (int e=0 ; e < nelectrons ; e++){
+        std::fill(vals[e].begin(), vals[e].end(), float());
+        std::fill(grads[e].begin(), grads[e].end(), float());
+        std::fill(hess[e].begin(), hess[e].end(), float());
+      }
+      #pragma omp parallel for collapse(2)
+      for (int e=0 ; e < nelectrons ; e++){
+          for (int b=0; b < nblock; b++) {
+              int offset = b*n_splines_block;
+              evaluate_vgh(&s, coefs.data()+offset,
+                  electron_pos_x[e], electron_pos_y[e], electron_pos_z[e],
+                  vals[e].data()+offset,
+                  grads[e].data()+3*offset,
+                  hess[e].data()+6*offset,
+                  n_splines_block);
+          }
+      }
     }
-
-    
-
+    auto end = std::chrono::system_clock::now();
+    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    std::cout << "diff: " << diff << " ms" << std::endl;
     std::cout << std::accumulate(vals[0].begin(), vals[0].end(), 0.) << std::endl;
     std::cout << std::accumulate(grads[0].begin(), grads[0].end(), 0.) << std::endl;
     std::cout << std::accumulate(hess[0].begin(), hess[0].end(), 0.) << std::endl;
