@@ -13,6 +13,6 @@ addons:
     packages:
     - g++-10
 script:
-  - g++-10 -Wall -Wextra -Werror spline.cpp -o spline cxxopts.hpp
+  - g++-10 -fopenmp -Wall -Wextra -Werror spline.cpp -o spline cxxopts.hpp
   - ./spline
   #To do, output 1block == N block for vals, grads, and hessians
