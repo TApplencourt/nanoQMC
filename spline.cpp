@@ -50,6 +50,7 @@ inline void getSplineBound(T x, TRESIDUAL& dx, int& ind, int nmax)
 template<typename T>
 inline static void compute_prefactors(T a[4], T da[4], T d2a[4], T tx)
 {
+    //48 total
     static constexpr T A00 = -1.0/6.0, A01 =  3.0/6.0, A02 = -3.0/6.0, A03 = 1.0/6.0;
     static constexpr T A10 =  3.0/6.0, A11 = -6.0/6.0, A12 =  0.0/6.0, A13 = 4.0/6.0;
     static constexpr T A20 = -3.0/6.0, A21 =  3.0/6.0, A22 =  3.0/6.0, A23 = 1.0/6.0;
@@ -83,16 +84,20 @@ inline void computeLocationAndFractional(
     int& ix, int& iy, int& iz, T a[4], T b[4], T c[4], T da[4], T db[4], T dc[4], T d2a[4],
     T d2b[4], T d2c[4])
 {
+  //150 total?
+  //3?
   x -= spline_m->x_grid.start;
   y -= spline_m->y_grid.start;
   z -= spline_m->z_grid.start;
 
   T tx, ty, tz;
 
+  //3?
   getSplineBound(x * spline_m->x_grid.delta_inv, tx, ix, spline_m->x_grid.num - 1);
   getSplineBound(y * spline_m->y_grid.delta_inv, ty, iy, spline_m->y_grid.num - 1);
   getSplineBound(z * spline_m->z_grid.delta_inv, tz, iz, spline_m->z_grid.num - 1);
 
+  //144
   compute_prefactors(a, da, d2a, tx);
   compute_prefactors(b, db, d2b, ty);
   compute_prefactors(c, dc, d2c, tz);
@@ -111,17 +116,23 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   int ix, iy, iz;
   float a[4], b[4], c[4], da[4], db[4], dc[4], d2a[4], d2b[4], d2c[4];
 
+  // cLAndF(150?) + 102 + 665*n_splines
+
+  //150?
   computeLocationAndFractional(spline_m, x, y, z, ix, iy, iz, a, b, c, da, db, dc, d2a, d2b, d2c);
 
   const intptr_t xs = spline_m->x_stride;
   const intptr_t ys = spline_m->y_stride;
   const intptr_t zs = spline_m->z_stride;
 
+
   const size_t out_offset = n_splines;
+  // 3(ptr)
   float* __restrict__ gx = grads;
   float* __restrict__ gy = grads + out_offset;
   float* __restrict__ gz = grads + 2 * out_offset;
 
+  // 9(ptr)
   float* __restrict__ hxx = hess;
   float* __restrict__ hxy = hess + out_offset;
   float* __restrict__ hxz = hess + 2 * out_offset;
@@ -129,15 +140,18 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   float* __restrict__ hyz = hess + 4 * out_offset;
   float* __restrict__ hzz = hess + 5 * out_offset;
 
-
+  // 16*(6+41*n_splines)
+  // 96 + 656*n_splines
   for (int i = 0; i < 4; i++)
     for (int j = 0; j < 4; j++)
     {
+      // 13(ptr)
       const float* __restrict__ coefs =  coefs_m + ((ix + i) * xs + (iy + j) * ys + iz * zs);
       const float* __restrict__ coefszs = coefs + zs;
       const float* __restrict__ coefs2zs = coefs + 2 * zs;
       const float* __restrict__ coefs3zs = coefs + 3 * zs;
 
+      // 6
       const float pre20 = d2a[i] * b[j];
       const float pre10 = da[i] * b[j];
       const float pre00 = a[i] * b[j];
@@ -146,6 +160,7 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
       const float pre02 = a[i] * d2b[j];
 
       const int iSplitPoint = n_splines;
+      //41*n_splines
       for (int n = 0; n < iSplitPoint; n++)
       {
        float coefsv    = coefs[n];
@@ -153,10 +168,12 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
        float coefsv2zs = coefs2zs[n];
        float coefsv3zs = coefs3zs[n];
 
+       // 21
        float sum0 = c[0] * coefsv + c[1] * coefsvzs + c[2] * coefsv2zs + c[3] * coefsv3zs;
        float sum1 = dc[0] * coefsv + dc[1] * coefsvzs + dc[2] * coefsv2zs + dc[3] * coefsv3zs;
        float sum2 = d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
 
+       // 20
        hxx[n] += pre20 * sum0;
        hxy[n] += pre11 * sum0;
        hxz[n] += pre10 * sum1;
@@ -173,6 +190,7 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   const float dxInv = spline_m->x_grid.delta_inv;
   const float dyInv = spline_m->y_grid.delta_inv;
   const float dzInv = spline_m->z_grid.delta_inv;
+  // 6
   const float dxx   = dxInv * dxInv;
   const float dyy   = dyInv * dyInv;
   const float dzz   = dzInv * dzInv;
@@ -180,6 +198,7 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   const float dxz   = dxInv * dzInv;
   const float dyz   = dyInv * dzInv;
 
+  //9*n_splines
   for (size_t n = 0; n < n_splines; n++)
   {
     gx[n] *= dxInv;
@@ -284,6 +303,7 @@ int main(int argc, char **argv) {
         std::fill(grads[e].begin(), grads[e].end(), float());
         std::fill(hess[e].begin(), hess[e].end(), float());
       }
+      //nelectrons*nblock*(cLAndF + 102 + 665*n_splines_block)
       #pragma omp parallel for collapse(2)
       for (int e=0 ; e < nelectrons ; e++){
           for (int b=0; b < nblock; b++) {
