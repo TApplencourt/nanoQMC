@@ -232,6 +232,7 @@ int main(int argc, char **argv) {
             ("e,", "Number of electron", cxxopts::value<int>()->default_value("20"))
             ("b,nblock", "Number of block", cxxopts::value<int>()->default_value("1"))
             ("n,niter", "Number of dummy iterations", cxxopts::value<int>()->default_value("1"))
+            ("v,verbose", "output level", cxxopts::value<int>()->default_value("0"))
     ;
 
     auto result = options.parse(argc, argv);
@@ -241,6 +242,7 @@ int main(int argc, char **argv) {
       exit(0);
     }
 
+    const int verbose = result["v"].as<int>();
     const int nx = result["x"].as<int>();
     const int ny = result["y"].as<int>();
     const int nz = result["z"].as<int>();
@@ -296,6 +298,7 @@ int main(int argc, char **argv) {
 
     auto start = std::chrono::system_clock::now();
 
+    double nflop = 1.*niter*nelectrons*nblock*(252+665*n_splines_block);
     // Kernel
     for (int i=0; i< niter; i++) {
       for (int e=0 ; e < nelectrons ; e++){
@@ -304,6 +307,7 @@ int main(int argc, char **argv) {
         std::fill(hess[e].begin(), hess[e].end(), float());
       }
       //nelectrons*nblock*(cLAndF + 102 + 665*n_splines_block)
+      //nelectrons*nblock*(252 + 665*n_splines_block)
       #pragma omp parallel for collapse(2)
       for (int e=0 ; e < nelectrons ; e++){
           for (int b=0; b < nblock; b++) {
@@ -318,11 +322,15 @@ int main(int argc, char **argv) {
       }
     }
     auto end = std::chrono::system_clock::now();
-    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    std::cout << "diff: " << diff << " ms" << std::endl;
-    std::cout << std::accumulate(vals[0].begin(), vals[0].end(), 0.) << std::endl;
-    std::cout << std::accumulate(grads[0].begin(), grads[0].end(), 0.) << std::endl;
-    std::cout << std::accumulate(hess[0].begin(), hess[0].end(), 0.) << std::endl;
+    double walltime = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+    std::cout << "flop count: " << nflop << std::endl;
+    std::cout << "time: " << walltime << " ns" << std::endl;
+    std::cout << "GFLOPS: " << nflop/walltime << std::endl;
+    if (verbose > 1){
+      std::cout << "val:  " << std::accumulate(vals[0].begin(), vals[0].end(), 0.) << std::endl;
+      std::cout << "grad: " << std::accumulate(grads[0].begin(), grads[0].end(), 0.) << std::endl;
+      std::cout << "hess: " << std::accumulate(hess[0].begin(), hess[0].end(), 0.) << std::endl;
+    }
     return 0;
 }
 
