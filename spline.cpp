@@ -233,7 +233,7 @@ int main(int argc, char **argv) {
           ("z", "Size of spline z", cxxopts::value<int>()->default_value("37"))
           ("e,", "Number of electron", cxxopts::value<int>()->default_value("20"))
           ("b,nblock", "Number of block", cxxopts::value<int>()->default_value("1"))
-          ("n,niter", "Number of dummy iterations", cxxopts::value<int>()->default_value("1"))
+          ("n,nwalker", "Number of walkers", cxxopts::value<int>()->default_value("1"))
           ("v,verbose", "output level", cxxopts::value<int>()->default_value("2"))
   ;
 
@@ -249,7 +249,7 @@ int main(int argc, char **argv) {
   const int ny = result["y"].as<int>();
   const int nz = result["z"].as<int>();
   const int nelectrons =  result["e"].as<int>();
-  const int niter = result["n"].as<int>();
+  const int nwalker = result["n"].as<int>();
 
   //Declaration
   const int norb = nelectrons  / 2;
@@ -280,13 +280,13 @@ int main(int argc, char **argv) {
 
   // coefs is array with dims: [n_blocks, nx+3, ny+3, nz+3, n_splines_per_block] 
   std::vector<float> coefs(n_coef);
-  std::vector<std::vector<float>> vals(nelectrons, std::vector<float>(n_splines));
-  std::vector<std::vector<float>> grads(nelectrons, std::vector<float>(n_splines*3));
-  std::vector<std::vector<float>> hess(nelectrons, std::vector<float>(n_splines*6));
+  std::vector<std::vector<float>> vals(nelectrons*nwalker, std::vector<float>(n_splines));
+  std::vector<std::vector<float>> grads(nelectrons*nwalker, std::vector<float>(n_splines*3));
+  std::vector<std::vector<float>> hess(nelectrons*nwalker, std::vector<float>(n_splines*6));
 
-  std::vector<float> electron_pos_x(nelectrons);
-  std::vector<float> electron_pos_y(nelectrons);
-  std::vector<float> electron_pos_z(nelectrons);
+  std::vector<float> electron_pos_x(nelectrons*nwalker);
+  std::vector<float> electron_pos_y(nelectrons*nwalker);
+  std::vector<float> electron_pos_z(nelectrons*nwalker);
 
   // Put random values
   std::uniform_real_distribution<float> distribution(0.,1.);
@@ -316,7 +316,7 @@ int main(int argc, char **argv) {
 
   auto start = std::chrono::system_clock::now();
 
-  double nflop = 1.*niter*nelectrons*nblock*(252+665*n_splines_block);
+  double nflop = 1.*nwalker*nelectrons*nblock*(252+665*n_splines_block);
 
   /*
    * sizes:
@@ -327,12 +327,12 @@ int main(int argc, char **argv) {
 
   // Kernel
   // TODO: add walker loop
-  for (int i=0; i< niter; i++) {
-    for (int e=0 ; e < nelectrons ; e++){
-      std::fill(vals[e].begin(), vals[e].end(), float());
-      std::fill(grads[e].begin(), grads[e].end(), float());
-      std::fill(hess[e].begin(), hess[e].end(), float());
-    }
+  for (int iwalker=0; iwalker< nwalker; iwalker++) {
+    //for (int e=0 ; e < nelectrons ; e++){
+    //  std::fill(vals[e+nelectrons*iwalker].begin(), vals[e+nelectrons*iwalker].end(), float());
+    //  std::fill(grads[e+nelectrons*iwalker].begin(), grads[e+nelectrons*iwalker].end(), float());
+    //  std::fill(hess[e+nelectrons*iwalker].begin(), hess[e+nelectrons*iwalker].end(), float());
+    //}
     //nelectrons*nblock*(cLAndF + 102 + 665*n_splines_block)
     //nelectrons*nblock*(252 + 665*n_splines_block)
     // loop over electrons
@@ -344,10 +344,12 @@ int main(int argc, char **argv) {
         //transfer: 1 spline, coef block, elec pos (3), vgh block
         //
         evaluate_vgh(&s, coefs.data()+block_idx_start*ngridpts,
-            electron_pos_x[e], electron_pos_y[e], electron_pos_z[e],
-            vals[e].data()+block_idx_start,
-            grads[e].data()+3*block_idx_start,
-            hess[e].data()+6*block_idx_start,
+            electron_pos_x[e+nelectrons*iwalker],
+            electron_pos_y[e+nelectrons*iwalker],
+            electron_pos_z[e+nelectrons*iwalker],
+            vals[e+nelectrons*iwalker].data()+block_idx_start,
+            grads[e+nelectrons*iwalker].data()+3*block_idx_start,
+            hess[e+nelectrons*iwalker].data()+6*block_idx_start,
             n_splines_block);
       }
     }
@@ -358,9 +360,13 @@ int main(int argc, char **argv) {
   std::cout << "time: " << walltime << " ns" << std::endl;
   std::cout << "GFLOPS: " << nflop/walltime << std::endl;
   if (verbose > 1){
-    std::cout << "val:  " << std::accumulate(vals[0].begin(), vals[0].end(), 0.) << std::endl;
-    std::cout << "grad: " << std::accumulate(grads[0].begin(), grads[0].end(), 0.) << std::endl;
-    std::cout << "hess: " << std::accumulate(hess[0].begin(), hess[0].end(), 0.) << std::endl;
+    for (int i=0; i<nelectrons*nwalker; i+=nelectrons){
+      for (int j=0; j<std::min(2,nelectrons); j++){
+        std::cout << "val:  " << std::accumulate(vals[i+j].begin(), vals[i+j].end(), 0.) << std::endl;
+        std::cout << "grad: " << std::accumulate(grads[i+j].begin(), grads[i+j].end(), 0.) << std::endl;
+        std::cout << "hess: " << std::accumulate(hess[i+j].begin(), hess[i+j].end(), 0.) << std::endl;
+      }
+    }
   }
   return 0;
 }
