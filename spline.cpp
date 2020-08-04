@@ -150,6 +150,9 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
       const float* __restrict__ coefszs = coefs + zs;
       const float* __restrict__ coefs2zs = coefs + 2 * zs;
       const float* __restrict__ coefs3zs = coefs + 3 * zs;
+      //std::cout << ((ix + i) * xs + (iy + j) * ys + iz * zs) << std::endl;
+      //std::cout << zs << " " << 3*zs << std::endl;
+        //std::dec << (long long) (coefs-coefs_m) << std::endl;
 
       // 6
       const float pre20 = d2a[i] * b[j];
@@ -232,7 +235,7 @@ int main(int argc, char **argv) {
           ("e,", "Number of electron", cxxopts::value<int>()->default_value("20"))
           ("b,nblock", "Number of block", cxxopts::value<int>()->default_value("1"))
           ("n,niter", "Number of dummy iterations", cxxopts::value<int>()->default_value("1"))
-          ("v,verbose", "output level", cxxopts::value<int>()->default_value("0"))
+          ("v,verbose", "output level", cxxopts::value<int>()->default_value("2"))
   ;
 
   auto result = options.parse(argc, argv);
@@ -250,14 +253,19 @@ int main(int argc, char **argv) {
   const int niter = result["n"].as<int>();
 
   //Declaration
-  const int nord = nelectrons  / 2;
-  const int n_splines = nord;
-  const int n_coef = nord * (nx+3) * (ny+3) * (nz+3);
+  const int norb = nelectrons  / 2;
+  const int n_splines = norb;
+  const int mx = nx+3;
+  const int my = ny+3;
+  const int mz = nz+3;
+  const int ngridpts = mx*my*mz;
+  const int n_coef = n_splines * ngridpts;
 
   const int nblock = result["nblock"].as<int>();
   assert ( n_splines%nblock == 0);
   
   const int n_splines_block = n_splines / nblock;
+  const int n_coef_block = n_coef / nblock;
   
   std::vector<double> l_start{0.,0.,0.};   
   std::vector<double> l_end{1.,1.,1.};
@@ -271,6 +279,17 @@ int main(int argc, char **argv) {
     l_delta_inv[i] = 1./l_delta[i];
   }
 
+  // coefs is array with dims: [nx+3, ny+3, nz+3, n_splines] (first index outer)
+  // coefs is array with dims: [n_blocks, nx+3, ny+3, nz+3, n_splines_per_block] 
+  // change layout?:           [n_blocks,[ nx+3, ny+3, nz+3, n_splines_per_block]]
+  //                           [n_blocks,[ nxyz, n_splines_per_block]]
+  // for consistent filling from generator, fill as:
+  //                           [nxyz, n_splines]?
+  // for ix in nx:
+  //   for iy in ny:
+  //     for iz in nz:
+  //       for ispline in nsplines:
+  //         ...
   std::vector<float> coefs(n_coef);
   std::vector<std::vector<float>> vals(nelectrons, std::vector<float>(n_splines));
   std::vector<std::vector<float>> grads(nelectrons, std::vector<float>(n_splines*3));
@@ -285,12 +304,31 @@ int main(int argc, char **argv) {
   std::minstd_rand generator(0);
 
 
-  std::generate(coefs.begin(), coefs.end(), [&distribution, &generator]() { return distribution(generator); });
+
+  for (int ir=0; ir < ngridpts; ir++){
+    for (int b=0; b < nblock; b++){
+      int block_start = n_splines_block*(b*ngridpts + ir);
+      std::generate_n(coefs.begin() + block_start,n_splines_block, [&distribution, &generator]() { return distribution(generator); });
+    }
+  }
+  //  std::fill(coefs.begin(), coefs.end(), 0.5);
+  //std::generate(coefs.begin(), coefs.end(), [&distribution, &generator]() { return distribution(generator); });
   std::generate(electron_pos_x.begin(), electron_pos_x.end(), [&distribution, &generator]() { return distribution(generator); });
   std::generate(electron_pos_y.begin(), electron_pos_y.end(), [&distribution, &generator]() { return distribution(generator); });
   std::generate(electron_pos_z.begin(), electron_pos_z.end(), [&distribution, &generator]() { return distribution(generator); });
- 
-  auto s = SplineType {  1, 1, 1,
+
+//  for (int ir=0; ir < ngridpts; ir++){
+//    for (int b=0; b < nblock; b++){
+//      for (int ispl=0; ispl < n_splines_block; ispl++){
+//        int ii = ispl + n_splines_block*(b+nblock*ir);
+//            std::cout << ii << " " << ir << " " << b << " " << ispl+b*n_splines_block << " " << coefs[ii] << std::endl;
+//      }
+//    }
+//  }
+            
+
+  //auto s = SplineType {  1,1,1,
+  auto s = SplineType {  n_splines_block*(nz+3)*(ny+3), n_splines_block*(nz+3), n_splines_block,
                          Ugrid{ l_start[0], l_end[0], l_num[0], l_delta[0], l_delta_inv[0] },
                          Ugrid{ l_start[1], l_end[1], l_num[1], l_delta[1], l_delta_inv[1] },
                          Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
@@ -299,7 +337,16 @@ int main(int argc, char **argv) {
   auto start = std::chrono::system_clock::now();
 
   double nflop = 1.*niter*nelectrons*nblock*(252+665*n_splines_block);
+
+  /*
+   * sizes:
+   * (float) coefs        : (nx+3) * (ny+3) * (nz+3) * nelectrons/2
+   * (float) electron_pos : 3 * nelectrons
+   * (float) vals         : nelectrons*
+   */
+
   // Kernel
+  // TODO: add walker loop
   for (int i=0; i< niter; i++) {
     for (int e=0 ; e < nelectrons ; e++){
       std::fill(vals[e].begin(), vals[e].end(), float());
@@ -312,7 +359,9 @@ int main(int argc, char **argv) {
     for (int e=0 ; e < nelectrons ; e++){
       for (int b=0; b < nblock; b++) {
         int offset = b*n_splines_block;
-        evaluate_vgh(&s, coefs.data()+offset,
+        //transfer: 1 spline, coef block, elec pos (3), vgh block
+        //
+        evaluate_vgh(&s, coefs.data()+offset*ngridpts,
             electron_pos_x[e], electron_pos_y[e], electron_pos_z[e],
             vals[e].data()+offset,
             grads[e].data()+3*offset,
