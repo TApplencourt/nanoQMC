@@ -143,6 +143,22 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
 
   // 16*(6+41*n_splines)
   // 96 + 656*n_splines
+  // TODO: use device pointer?
+  //       for coefs_m pass address of coefs_m[0] and data from range used
+//  #pragma omp target map (tofrom: coefs_m[0:(ix+4)*xs+(iy+4)*ys+(iz+4)*zs], \
+//                                  a[0:4], da[0:4], d2a[0:4], \
+//                                  b[0:4], db[0:4], d2b[0:4], \
+//                                  c[0:4], dc[0:4], d2c[0:4], \
+//                                  gx[0:n_splines_local], \
+//                                  gy[0:n_splines_local], \
+//                                  gz[0:n_splines_local], \
+//                                  hxx[0:n_splines_local], \
+//                                  hxy[0:n_splines_local], \
+//                                  hxz[0:n_splines_local], \
+//                                  hyy[0:n_splines_local], \
+//                                  hyz[0:n_splines_local], \
+//                                  hzz[0:n_splines_local])
+//  #pragma omp parallel for collapse(2)
   for (int i = 0; i < 4; i++)
     for (int j = 0; j < 4; j++)
     {
@@ -176,15 +192,25 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
        float sum2 = d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
 
        // 20
+       #pragma omp atomic
        vals[n] += pre00 * sum0;
+       #pragma omp atomic
        gx[n] += pre10 * sum0;
+       #pragma omp atomic
        gy[n] += pre01 * sum0;
+       #pragma omp atomic
        gz[n] += pre00 * sum1;
+       #pragma omp atomic
        hxx[n] += pre20 * sum0;
+       #pragma omp atomic
        hxy[n] += pre11 * sum0;
+       #pragma omp atomic
        hxz[n] += pre10 * sum1;
+       #pragma omp atomic
        hyy[n] += pre02 * sum0;
+       #pragma omp atomic
        hyz[n] += pre01 * sum1;
+       #pragma omp atomic
        hzz[n] += pre00 * sum2;
       }
     }
@@ -201,6 +227,16 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   const float dzz   = dzInv * dzInv;
 
   //9*n_splines
+  //#pragma omp target map (tofrom:gx[0:n_splines_local], \
+  //                               gy[0:n_splines_local], \
+  //                               gz[0:n_splines_local], \
+  //                               hxx[0:n_splines_local], \
+  //                               hxy[0:n_splines_local], \
+  //                               hxz[0:n_splines_local], \
+  //                               hyy[0:n_splines_local], \
+  //                               hyz[0:n_splines_local], \
+  //                               hzz[0:n_splines_local])
+  //#pragma omp parallel for 
   for (size_t n = 0; n < n_splines_local; n++)
   {
     gx[n] *= dxInv;
@@ -280,9 +316,13 @@ int main(int argc, char **argv) {
 
   // coefs is array with dims: [n_blocks, nx+3, ny+3, nz+3, n_splines_per_block] 
   std::vector<float> coefs(n_coef);
-  std::vector<std::vector<float>> vals(nelectrons*nwalker, std::vector<float>(n_splines));
-  std::vector<std::vector<float>> grads(nelectrons*nwalker, std::vector<float>(n_splines*3));
-  std::vector<std::vector<float>> hess(nelectrons*nwalker, std::vector<float>(n_splines*6));
+  
+  std::vector<float> vals(nelectrons*nwalker*n_splines);
+  std::vector<float> grads(nelectrons*nwalker*n_splines*3);
+  std::vector<float> hess(nelectrons*nwalker*n_splines*6);
+  //std::vector<std::vector<float>> vals(nelectrons*nwalker, std::vector<float>(n_splines));
+  //std::vector<std::vector<float>> grads(nelectrons*nwalker, std::vector<float>(n_splines*3));
+  //std::vector<std::vector<float>> hess(nelectrons*nwalker, std::vector<float>(n_splines*6));
 
   std::vector<float> electron_pos_x(nelectrons*nwalker);
   std::vector<float> electron_pos_y(nelectrons*nwalker);
@@ -326,34 +366,46 @@ int main(int argc, char **argv) {
    */
 
   // Kernel
-  // TODO: add walker loop
+  //#pragma omp parallel for collapse(3)
+  const float* __restrict pt_vals = vals.data();
+  const float* __restrict pt_grads = grads.data();
+  const float* __restrict pt_hess = hess.data();
+  #pragma omp target enter data map(to: pt_vals[0:nwalker*n_splines*nelectrons],\
+                                        pt_grads[0:nwalker*n_splines*nelectrons*3],\
+                                        pt_hess[0:nwalker*n_splines*nelectrons*6])
+  //#pragma omp target enter data map(to: pt_vals[0:n_splines_block*nelectrons],\
+  //                                      pt_grads[0:n_splines_block*nelectrons*3],\
+  //                                      pt_hess[0:n_splines_block*nelectrons*6])
+  //#pragma omp target enter data map(to: pt_vals[0:n_splines_block])
   for (int iwalker=0; iwalker< nwalker; iwalker++) {
-    //for (int e=0 ; e < nelectrons ; e++){
-    //  std::fill(vals[e+nelectrons*iwalker].begin(), vals[e+nelectrons*iwalker].end(), float());
-    //  std::fill(grads[e+nelectrons*iwalker].begin(), grads[e+nelectrons*iwalker].end(), float());
-    //  std::fill(hess[e+nelectrons*iwalker].begin(), hess[e+nelectrons*iwalker].end(), float());
-    //}
     //nelectrons*nblock*(cLAndF + 102 + 665*n_splines_block)
     //nelectrons*nblock*(252 + 665*n_splines_block)
     // loop over electrons
-    #pragma omp parallel for collapse(2)
     for (int e=0 ; e < nelectrons ; e++){
       // loop over blocks
       for (int b=0; b < nblock; b++) {
         int block_idx_start = b*n_splines_block;
         //transfer: 1 spline, coef block, elec pos (3), vgh block
-        //
+        //const float* __restrict__ pt_vals = vals[e+nelectrons*iwalker].data()+block_idx_start;
+  //      #pragma omp target enter data map(to: pt_vals[0:n_splines_block])
         evaluate_vgh(&s, coefs.data()+block_idx_start*ngridpts,
             electron_pos_x[e+nelectrons*iwalker],
             electron_pos_y[e+nelectrons*iwalker],
             electron_pos_z[e+nelectrons*iwalker],
-            vals[e+nelectrons*iwalker].data()+block_idx_start,
-            grads[e+nelectrons*iwalker].data()+3*block_idx_start,
-            hess[e+nelectrons*iwalker].data()+6*block_idx_start,
+            vals.data()+(e+nelectrons*iwalker)*n_splines+block_idx_start,
+            grads.data()+(e+nelectrons*iwalker)*n_splines*3+3*block_idx_start,
+            hess.data()+(e+nelectrons*iwalker)*n_splines*6+6*block_idx_start,
             n_splines_block);
+       //#pragma omp target update from(pt_vals[0:n_splines_block])
       }
     }
   }
+  #pragma omp target exit data map(from: pt_vals[0:nwalker*n_splines*nelectrons],\
+                                        pt_grads[0:nwalker*n_splines*nelectrons*3],\
+                                        pt_hess[0:nwalker*n_splines*nelectrons*6])
+  //#pragma omp target exit data map(from: pt_vals[0:n_splines_block*nelectrons],\
+  //                                      pt_grads[0:n_splines_block*nelectrons*3],\
+  //                                      pt_hess[0:n_splines_block*nelectrons*6])
   auto end = std::chrono::system_clock::now();
   double walltime = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
   std::cout << "flop count: " << nflop << std::endl;
@@ -362,9 +414,12 @@ int main(int argc, char **argv) {
   if (verbose > 1){
     for (int i=0; i<nelectrons*nwalker; i+=nelectrons){
       for (int j=0; j<std::min(2,nelectrons); j++){
-        std::cout << "val:  " << std::accumulate(vals[i+j].begin(), vals[i+j].end(), 0.) << std::endl;
-        std::cout << "grad: " << std::accumulate(grads[i+j].begin(), grads[i+j].end(), 0.) << std::endl;
-        std::cout << "hess: " << std::accumulate(hess[i+j].begin(), hess[i+j].end(), 0.) << std::endl;
+        std::cout << "val:  " << std::accumulate(vals.begin()+(i+j)*n_splines, 
+                                                 vals.begin()+(i+j+1)*n_splines, 0.) << std::endl;
+        std::cout << "grad: " << std::accumulate(grads.begin()+(i+j)*n_splines*3,
+                                                 grads.begin()+(i+j+1)*n_splines*3, 0.) << std::endl;
+        std::cout << "hess: " << std::accumulate(hess.begin()+(i+j)*n_splines*6,
+                                                 hess.begin()+(i+j+1)*n_splines*6, 0.) << std::endl;
       }
     }
   }
