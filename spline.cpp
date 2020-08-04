@@ -111,7 +111,7 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
                          float* __restrict__ vals,
                          float* __restrict__ grads,
                          float* __restrict__ hess,
-                         size_t n_splines)
+                         size_t n_splines_local)
 {
   int ix, iy, iz;
   float a[4], b[4], c[4], da[4], db[4], dc[4], d2a[4], d2b[4], d2c[4];
@@ -126,19 +126,20 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   const intptr_t zs = spline_m->z_stride;
 
 
-  const size_t out_offset = n_splines;
+  // gx,gy,gz each size [n_splines_local]
+  // grads = [gx,gy,gz]
   // 3(ptr)
   float* __restrict__ gx = grads;
-  float* __restrict__ gy = grads + out_offset;
-  float* __restrict__ gz = grads + 2 * out_offset;
+  float* __restrict__ gy = grads + n_splines_local;
+  float* __restrict__ gz = grads + 2 * n_splines_local;
 
   // 9(ptr)
   float* __restrict__ hxx = hess;
-  float* __restrict__ hxy = hess + out_offset;
-  float* __restrict__ hxz = hess + 2 * out_offset;
-  float* __restrict__ hyy = hess + 3 * out_offset;
-  float* __restrict__ hyz = hess + 4 * out_offset;
-  float* __restrict__ hzz = hess + 5 * out_offset;
+  float* __restrict__ hxy = hess + n_splines_local;
+  float* __restrict__ hxz = hess + 2 * n_splines_local;
+  float* __restrict__ hyy = hess + 3 * n_splines_local;
+  float* __restrict__ hyz = hess + 4 * n_splines_local;
+  float* __restrict__ hzz = hess + 5 * n_splines_local;
 
   // 16*(6+41*n_splines)
   // 96 + 656*n_splines
@@ -146,13 +147,12 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
     for (int j = 0; j < 4; j++)
     {
       // 13(ptr)
+      // coefs has dims [ nx+3, ny+3, nz+3, n_splines_local ]
+      // explicit outer loops over x and y, unroll inner loop over z
       const float* __restrict__ coefs =  coefs_m + ((ix + i) * xs + (iy + j) * ys + iz * zs);
       const float* __restrict__ coefszs = coefs + zs;
       const float* __restrict__ coefs2zs = coefs + 2 * zs;
       const float* __restrict__ coefs3zs = coefs + 3 * zs;
-      //std::cout << ((ix + i) * xs + (iy + j) * ys + iz * zs) << std::endl;
-      //std::cout << zs << " " << 3*zs << std::endl;
-        //std::dec << (long long) (coefs-coefs_m) << std::endl;
 
       // 6
       const float pre20 = d2a[i] * b[j];
@@ -162,9 +162,8 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
       const float pre01 = a[i] * db[j];
       const float pre02 = a[i] * d2b[j];
 
-      const int iSplitPoint = n_splines;
       //41*n_splines
-      for (int n = 0; n < iSplitPoint; n++)
+      for (int n = 0; n < n_splines_local; n++)
       {
        float coefsv    = coefs[n];
        float coefsvzs  = coefszs[n];
@@ -177,16 +176,16 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
        float sum2 = d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
 
        // 20
+       vals[n] += pre00 * sum0;
+       gx[n] += pre10 * sum0;
+       gy[n] += pre01 * sum0;
+       gz[n] += pre00 * sum1;
        hxx[n] += pre20 * sum0;
        hxy[n] += pre11 * sum0;
        hxz[n] += pre10 * sum1;
        hyy[n] += pre02 * sum0;
        hyz[n] += pre01 * sum1;
        hzz[n] += pre00 * sum2;
-       gx[n] += pre10 * sum0;
-       gy[n] += pre01 * sum0;
-       gz[n] += pre00 * sum1;
-       vals[n] += pre00 * sum0;
       }
     }
 
@@ -195,24 +194,24 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   const float dzInv = spline_m->z_grid.delta_inv;
   // 6
   const float dxx   = dxInv * dxInv;
-  const float dyy   = dyInv * dyInv;
-  const float dzz   = dzInv * dzInv;
   const float dxy   = dxInv * dyInv;
   const float dxz   = dxInv * dzInv;
+  const float dyy   = dyInv * dyInv;
   const float dyz   = dyInv * dzInv;
+  const float dzz   = dzInv * dzInv;
 
   //9*n_splines
-  for (size_t n = 0; n < n_splines; n++)
+  for (size_t n = 0; n < n_splines_local; n++)
   {
     gx[n] *= dxInv;
     gy[n] *= dyInv;
     gz[n] *= dzInv;
     hxx[n] *= dxx;
-    hyy[n] *= dyy;
-    hzz[n] *= dzz;
     hxy[n] *= dxy;
     hxz[n] *= dxz;
+    hyy[n] *= dyy;
     hyz[n] *= dyz;
+    hzz[n] *= dzz;
   }
 
 }
@@ -279,17 +278,7 @@ int main(int argc, char **argv) {
     l_delta_inv[i] = 1./l_delta[i];
   }
 
-  // coefs is array with dims: [nx+3, ny+3, nz+3, n_splines] (first index outer)
   // coefs is array with dims: [n_blocks, nx+3, ny+3, nz+3, n_splines_per_block] 
-  // change layout?:           [n_blocks,[ nx+3, ny+3, nz+3, n_splines_per_block]]
-  //                           [n_blocks,[ nxyz, n_splines_per_block]]
-  // for consistent filling from generator, fill as:
-  //                           [nxyz, n_splines]?
-  // for ix in nx:
-  //   for iy in ny:
-  //     for iz in nz:
-  //       for ispline in nsplines:
-  //         ...
   std::vector<float> coefs(n_coef);
   std::vector<std::vector<float>> vals(nelectrons, std::vector<float>(n_splines));
   std::vector<std::vector<float>> grads(nelectrons, std::vector<float>(n_splines*3));
@@ -303,31 +292,22 @@ int main(int argc, char **argv) {
   std::uniform_real_distribution<float> distribution(0.,1.);
   std::minstd_rand generator(0);
 
-
-
+  // initialize by block to allow comparison with different number of blocks
   for (int ir=0; ir < ngridpts; ir++){
     for (int b=0; b < nblock; b++){
       int block_start = n_splines_block*(b*ngridpts + ir);
       std::generate_n(coefs.begin() + block_start,n_splines_block, [&distribution, &generator]() { return distribution(generator); });
     }
   }
-  //  std::fill(coefs.begin(), coefs.end(), 0.5);
-  //std::generate(coefs.begin(), coefs.end(), [&distribution, &generator]() { return distribution(generator); });
   std::generate(electron_pos_x.begin(), electron_pos_x.end(), [&distribution, &generator]() { return distribution(generator); });
   std::generate(electron_pos_y.begin(), electron_pos_y.end(), [&distribution, &generator]() { return distribution(generator); });
   std::generate(electron_pos_z.begin(), electron_pos_z.end(), [&distribution, &generator]() { return distribution(generator); });
 
-//  for (int ir=0; ir < ngridpts; ir++){
-//    for (int b=0; b < nblock; b++){
-//      for (int ispl=0; ispl < n_splines_block; ispl++){
-//        int ii = ispl + n_splines_block*(b+nblock*ir);
-//            std::cout << ii << " " << ir << " " << b << " " << ispl+b*n_splines_block << " " << coefs[ii] << std::endl;
-//      }
-//    }
-//  }
-            
 
-  //auto s = SplineType {  1,1,1,
+
+  // coefs layout per block is [mx, my, mz, n_splines_block], so in a flattened array:
+  // coefs[ix,iy,iz,ispl] = coefs[ispl + nspl*(iz + mz*(iy + my*(ix)))]
+  //                             [ispl + iz*nspl + iy*nspl*mz + iz*my*mz*nspl]
   auto s = SplineType {  n_splines_block*(nz+3)*(ny+3), n_splines_block*(nz+3), n_splines_block,
                          Ugrid{ l_start[0], l_end[0], l_num[0], l_delta[0], l_delta_inv[0] },
                          Ugrid{ l_start[1], l_end[1], l_num[1], l_delta[1], l_delta_inv[1] },
@@ -355,17 +335,19 @@ int main(int argc, char **argv) {
     }
     //nelectrons*nblock*(cLAndF + 102 + 665*n_splines_block)
     //nelectrons*nblock*(252 + 665*n_splines_block)
+    // loop over electrons
     #pragma omp parallel for collapse(2)
     for (int e=0 ; e < nelectrons ; e++){
+      // loop over blocks
       for (int b=0; b < nblock; b++) {
-        int offset = b*n_splines_block;
+        int block_idx_start = b*n_splines_block;
         //transfer: 1 spline, coef block, elec pos (3), vgh block
         //
-        evaluate_vgh(&s, coefs.data()+offset*ngridpts,
+        evaluate_vgh(&s, coefs.data()+block_idx_start*ngridpts,
             electron_pos_x[e], electron_pos_y[e], electron_pos_z[e],
-            vals[e].data()+offset,
-            grads[e].data()+3*offset,
-            hess[e].data()+6*offset,
+            vals[e].data()+block_idx_start,
+            grads[e].data()+3*block_idx_start,
+            hess[e].data()+6*block_idx_start,
             n_splines_block);
       }
     }
