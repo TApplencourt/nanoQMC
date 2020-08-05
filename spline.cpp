@@ -104,10 +104,10 @@ inline void computeLocationAndFractional(
 }
 
 inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
-                         float* __restrict__ coefs_m,
-                         float x,
-                         float y,
-                         float z, 
+                         const float* __restrict__ coefs_m,
+                         const float x,
+                         const float y,
+                         const float z, 
                          float* __restrict__ vals,
                          float* __restrict__ grads,
                          float* __restrict__ hess,
@@ -141,24 +141,13 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   float* __restrict__ hyz = hess + 4 * n_splines_local;
   float* __restrict__ hzz = hess + 5 * n_splines_local;
 
+  std::fill(vals, vals+n_splines_local, float());
+  std::fill(grads, grads+3*n_splines_local, float());
+  std::fill(hess, hess+6*n_splines_local, float());
   // 16*(6+41*n_splines)
   // 96 + 656*n_splines
   // TODO: use device pointer?
   //       for coefs_m pass address of coefs_m[0] and data from range used
-//  #pragma omp target map (tofrom: coefs_m[0:(ix+4)*xs+(iy+4)*ys+(iz+4)*zs], \
-//                                  a[0:4], da[0:4], d2a[0:4], \
-//                                  b[0:4], db[0:4], d2b[0:4], \
-//                                  c[0:4], dc[0:4], d2c[0:4], \
-//                                  gx[0:n_splines_local], \
-//                                  gy[0:n_splines_local], \
-//                                  gz[0:n_splines_local], \
-//                                  hxx[0:n_splines_local], \
-//                                  hxy[0:n_splines_local], \
-//                                  hxz[0:n_splines_local], \
-//                                  hyy[0:n_splines_local], \
-//                                  hyz[0:n_splines_local], \
-//                                  hzz[0:n_splines_local])
-//  #pragma omp parallel for collapse(2)
   for (int i = 0; i < 4; i++)
     for (int j = 0; j < 4; j++)
     {
@@ -192,25 +181,15 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
        float sum2 = d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
 
        // 20
-       #pragma omp atomic
        vals[n] += pre00 * sum0;
-       #pragma omp atomic
        gx[n] += pre10 * sum0;
-       #pragma omp atomic
        gy[n] += pre01 * sum0;
-       #pragma omp atomic
        gz[n] += pre00 * sum1;
-       #pragma omp atomic
        hxx[n] += pre20 * sum0;
-       #pragma omp atomic
        hxy[n] += pre11 * sum0;
-       #pragma omp atomic
        hxz[n] += pre10 * sum1;
-       #pragma omp atomic
        hyy[n] += pre02 * sum0;
-       #pragma omp atomic
        hyz[n] += pre01 * sum1;
-       #pragma omp atomic
        hzz[n] += pre00 * sum2;
       }
     }
@@ -227,16 +206,6 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   const float dzz   = dzInv * dzInv;
 
   //9*n_splines
-  //#pragma omp target map (tofrom:gx[0:n_splines_local], \
-  //                               gy[0:n_splines_local], \
-  //                               gz[0:n_splines_local], \
-  //                               hxx[0:n_splines_local], \
-  //                               hxy[0:n_splines_local], \
-  //                               hxz[0:n_splines_local], \
-  //                               hyy[0:n_splines_local], \
-  //                               hyz[0:n_splines_local], \
-  //                               hzz[0:n_splines_local])
-  //#pragma omp parallel for 
   for (size_t n = 0; n < n_splines_local; n++)
   {
     gx[n] *= dxInv;
@@ -352,7 +321,7 @@ int main(int argc, char **argv) {
                          Ugrid{ l_start[0], l_end[0], l_num[0], l_delta[0], l_delta_inv[0] },
                          Ugrid{ l_start[1], l_end[1], l_num[1], l_delta[1], l_delta_inv[1] },
                          Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
-                      } ;
+                      } ;  
 
   auto start = std::chrono::system_clock::now();
 
@@ -366,46 +335,63 @@ int main(int argc, char **argv) {
    */
 
   // Kernel
-  //#pragma omp parallel for collapse(3)
-  const float* __restrict pt_vals = vals.data();
-  const float* __restrict pt_grads = grads.data();
-  const float* __restrict pt_hess = hess.data();
-  #pragma omp target enter data map(to: pt_vals[0:nwalker*n_splines*nelectrons],\
+  float* __restrict__ pt_vals = vals.data();
+  float* __restrict__ pt_grads = grads.data();
+  float* __restrict__ pt_hess = hess.data();
+  const float* __restrict__ pt_coefs = coefs.data();
+  const float* __restrict__ e_x = electron_pos_x.data();
+  const float* __restrict__ e_y = electron_pos_y.data();
+  const float* __restrict__ e_z = electron_pos_z.data();
+  #pragma omp target enter data map(to: s,\
+                                        pt_coefs[0:n_coef],\
+                                        e_x[0:nwalker*nelectrons],\
+                                        e_y[0:nwalker*nelectrons],\
+                                        e_z[0:nwalker*nelectrons])\
+                                    map(alloc:\
+                                        pt_vals[0:nwalker*n_splines*nelectrons],\
                                         pt_grads[0:nwalker*n_splines*nelectrons*3],\
-                                        pt_hess[0:nwalker*n_splines*nelectrons*6])
-  //#pragma omp target enter data map(to: pt_vals[0:n_splines_block*nelectrons],\
-  //                                      pt_grads[0:n_splines_block*nelectrons*3],\
-  //                                      pt_hess[0:n_splines_block*nelectrons*6])
-  //#pragma omp target enter data map(to: pt_vals[0:n_splines_block])
+                                        pt_hess[0:nwalker*n_splines*nelectrons*6],\
+)
+  #pragma omp target teams distribute parallel for collapse(3)
   for (int iwalker=0; iwalker< nwalker; iwalker++) {
     //nelectrons*nblock*(cLAndF + 102 + 665*n_splines_block)
     //nelectrons*nblock*(252 + 665*n_splines_block)
     // loop over electrons
     for (int e=0 ; e < nelectrons ; e++){
       // loop over blocks
+//  #pragma omp target map(to: s,\
+//                                        pt_vals[0:nwalker*n_splines*nelectrons],\
+//                                        pt_grads[0:nwalker*n_splines*nelectrons*3],\
+//                                        pt_hess[0:nwalker*n_splines*nelectrons*6],\
+//                                        pt_coefs[0:n_coef],\
+//                                        e_x[0:nwalker*nelectrons],\
+//                                        e_y[0:nwalker*nelectrons],\
+//                                        e_z[0:nwalker*nelectrons],\
+//)
       for (int b=0; b < nblock; b++) {
         int block_idx_start = b*n_splines_block;
         //transfer: 1 spline, coef block, elec pos (3), vgh block
         //const float* __restrict__ pt_vals = vals[e+nelectrons*iwalker].data()+block_idx_start;
   //      #pragma omp target enter data map(to: pt_vals[0:n_splines_block])
-        evaluate_vgh(&s, coefs.data()+block_idx_start*ngridpts,
-            electron_pos_x[e+nelectrons*iwalker],
-            electron_pos_y[e+nelectrons*iwalker],
-            electron_pos_z[e+nelectrons*iwalker],
-            vals.data()+(e+nelectrons*iwalker)*n_splines+block_idx_start,
-            grads.data()+(e+nelectrons*iwalker)*n_splines*3+3*block_idx_start,
-            hess.data()+(e+nelectrons*iwalker)*n_splines*6+6*block_idx_start,
+        evaluate_vgh(&s, pt_coefs+block_idx_start*ngridpts,
+            *(e_x+e+nelectrons*iwalker),
+            *(e_y+e+nelectrons*iwalker),
+            *(e_z+e+nelectrons*iwalker),
+            //electron_pos_x[e+nelectrons*iwalker],
+            //electron_pos_y[e+nelectrons*iwalker],
+            //electron_pos_z[e+nelectrons*iwalker],
+            pt_vals+(e+nelectrons*iwalker)*n_splines+block_idx_start,
+            pt_grads+(e+nelectrons*iwalker)*n_splines*3+3*block_idx_start,
+            pt_hess+(e+nelectrons*iwalker)*n_splines*6+6*block_idx_start,
             n_splines_block);
        //#pragma omp target update from(pt_vals[0:n_splines_block])
       }
     }
   }
-  #pragma omp target exit data map(from: pt_vals[0:nwalker*n_splines*nelectrons],\
-                                        pt_grads[0:nwalker*n_splines*nelectrons*3],\
-                                        pt_hess[0:nwalker*n_splines*nelectrons*6])
-  //#pragma omp target exit data map(from: pt_vals[0:n_splines_block*nelectrons],\
-  //                                      pt_grads[0:n_splines_block*nelectrons*3],\
-  //                                      pt_hess[0:n_splines_block*nelectrons*6])
+  #pragma omp target exit data map(from: \
+                                         pt_vals[0:nwalker*n_splines*nelectrons],\
+                                         pt_grads[0:nwalker*n_splines*nelectrons*3],\
+                                         pt_hess[0:nwalker*n_splines*nelectrons*6])
   auto end = std::chrono::system_clock::now();
   double walltime = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
   std::cout << "flop count: " << nflop << std::endl;
