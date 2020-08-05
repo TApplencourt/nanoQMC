@@ -270,6 +270,13 @@ int main(int argc, char **argv) {
   
   const int n_splines_block = n_splines / nblock;
   const int n_coef_block = n_coef / nblock;
+  const int xs0 = n_splines*my*mz;
+  const int ys0 = n_splines*mz;
+  const int zs0 = n_splines;
+  const int xs = n_splines_block*my*mz;
+  const int ys = n_splines_block*mz;
+  const int zs = n_splines_block;
+
   
   std::vector<double> l_start{0.,0.,0.};   
   std::vector<double> l_end{1.,1.,1.};
@@ -301,13 +308,34 @@ int main(int argc, char **argv) {
   std::uniform_real_distribution<float> distribution(0.,1.);
   std::minstd_rand generator(0);
 
-  // initialize by block to allow comparison with different number of blocks
-  for (int ir=0; ir < ngridpts; ir++){
-    for (int b=0; b < nblock; b++){
-      int block_start = n_splines_block*(b*ngridpts + ir);
-      std::generate_n(coefs.begin() + block_start,n_splines_block, [&distribution, &generator]() { return distribution(generator); });
+  // too expensive to init everything randomly, just do one full orbital with random values and tweak the rest
+  std::vector<float> coef_init(ngridpts);
+  std::generate(coef_init.begin(),coef_init.end(), [&distribution, &generator]() { return distribution(generator); });
+
+  std::vector<float> coef_fac(n_splines);
+  for (int i=0; i < n_splines_block; i++){
+    for (int j=0; j < nblock; j++){
+      coef_fac[i*nblock+j] = std::cos(2*M_PI*(j*n_splines_block+i)/n_splines);
     }
   }
+  for (int ix=0; ix<mx; ix++){
+    for (int iy=0; iy<my; iy++){
+      for (int iz=0; iz<mz; iz++){
+        for (int ispl=0; ispl<n_splines; ispl++){
+          coefs[ix*xs0 + iy*ys0 + iz*zs0 + ispl] = coef_init[ix*my*mz + iy*mz + iz] * coef_fac[ispl];
+        }
+      }
+    }
+  }
+
+  
+  // initialize by block to allow comparison with different number of blocks
+  //for (int ir=0; ir < ngridpts; ir++){
+  //  for (int b=0; b < nblock; b++){
+  //    int block_start = n_splines_block*(b*ngridpts + ir);
+  //    std::generate_n(coefs.begin() + block_start,n_splines_block, [&distribution, &generator]() { return distribution(generator); });
+  //  }
+  //}
   std::generate(electron_pos_x.begin(), electron_pos_x.end(), [&distribution, &generator]() { return distribution(generator); });
   std::generate(electron_pos_y.begin(), electron_pos_y.end(), [&distribution, &generator]() { return distribution(generator); });
   std::generate(electron_pos_z.begin(), electron_pos_z.end(), [&distribution, &generator]() { return distribution(generator); });
@@ -397,18 +425,25 @@ int main(int argc, char **argv) {
   std::cout << "flop count: " << nflop << std::endl;
   std::cout << "time: " << walltime << " ns" << std::endl;
   std::cout << "GFLOPS: " << nflop/walltime << std::endl;
-  if (verbose > 1){
-    for (int i=0; i<nelectrons*nwalker; i+=nelectrons){
-      for (int j=0; j<std::min(2,nelectrons); j++){
-        std::cout << "val:  " << std::accumulate(vals.begin()+(i+j)*n_splines, 
-                                                 vals.begin()+(i+j+1)*n_splines, 0.) << std::endl;
-        std::cout << "grad: " << std::accumulate(grads.begin()+(i+j)*n_splines*3,
-                                                 grads.begin()+(i+j+1)*n_splines*3, 0.) << std::endl;
-        std::cout << "hess: " << std::accumulate(hess.begin()+(i+j)*n_splines*6,
-                                                 hess.begin()+(i+j+1)*n_splines*6, 0.) << std::endl;
-      }
+  for (int i=0; i<nelectrons*nwalker; i+=nelectrons){
+    for (int j=0; j<nelectrons; j++){
+      assert(std::accumulate(vals.begin()+(i+j)*n_splines, 
+                                               vals.begin()+(i+j+1)*n_splines, 0.) < std::numeric_limits<float>::epsilon());
+      assert(std::accumulate(grads.begin()+(i+j)*n_splines*3,
+                                               grads.begin()+(i+j+1)*n_splines*3, 0.) < std::numeric_limits<float>::epsilon());
+      assert(std::accumulate(hess.begin()+(i+j)*n_splines*6,
+                                               hess.begin()+(i+j+1)*n_splines*6, 0.) < std::numeric_limits<float>::epsilon());
     }
   }
+  bool valnonzero = std::any_of(vals.begin(), vals.end(), [](float i) { return fabs(i) > std::numeric_limits<float>::epsilon() ; });
+  bool gradsnonzero = std::any_of(grads.begin(), grads.end(), [](float i) { return fabs(i) > std::numeric_limits<float>::epsilon() ; });
+  bool hessnonzero = std::any_of(hess.begin(), hess.end(), [](float i) { return fabs(i) > std::numeric_limits<float>::epsilon() ; });
+  assert(valnonzero);
+  assert(gradsnonzero);
+  assert(hessnonzero);
+//  for (std::vector<float>::iterator i = vals.begin(); i != vals.end(); ++i){
+//    std::cout << *i << std::endl;
+//  }
   return 0;
 }
 
