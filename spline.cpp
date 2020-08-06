@@ -369,17 +369,24 @@ int main(int argc, char **argv) {
   const float* __restrict__ e_x = electron_pos_x.data();
   const float* __restrict__ e_y = electron_pos_y.data();
   const float* __restrict__ e_z = electron_pos_z.data();
+  // dummy loop to do clLinkProgram outside of timer bounds below
+  {
+    #pragma omp target
+    for (int i=0; i<1; i++){
+      continue;
+    }
+  }
   auto start = std::chrono::system_clock::now();
   // Kernel
   #pragma omp target enter data map(to: s, pt_coefs[0:n_coef],\
-        e_x[0:nwalker*nelectrons], e_y[0:nwalker*nelectrons], e_z[0:nwalker*nelectrons])\
+            e_x[0:nwalker*nelectrons], e_y[0:nwalker*nelectrons], e_z[0:nwalker*nelectrons])\
      map(alloc: pt_vals[0:nwalker*n_splines*nelectrons],\
-        pt_grads[0:nwalker*n_splines*nelectrons*3], pt_hess[0:nwalker*n_splines*nelectrons*6])
+            pt_grads[0:nwalker*n_splines*nelectrons*3], pt_hess[0:nwalker*n_splines*nelectrons*6])
   #pragma omp target teams distribute parallel for collapse(3)
   for (int iwalker=0; iwalker < nwalker; iwalker++) {
-    int e0 = nelectrons * iwalker;
-    for (int e=e0 ; e < e0 + nelectrons ; e++){
+    for (int ei=0 ; ei < nelectrons ; ei++){
       for (int b=0; b < nblock; b++) {
+        int e = ei + nelectrons * iwalker;
         int block_idx_start = b * n_splines_block;
         evaluate_vgh(&s,
             pt_coefs + block_idx_start * ngridpts,
