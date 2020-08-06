@@ -270,9 +270,11 @@ int main(int argc, char **argv) {
   
   const int n_splines_block = n_splines / nblock;
   const int n_coef_block = n_coef / nblock;
+  // stride for consistent initialization (1 block)
   const int xs0 = n_splines*my*mz;
   const int ys0 = n_splines*mz;
   const int zs0 = n_splines;
+  // stride for blocked splines
   const int xs = n_splines_block*my*mz;
   const int ys = n_splines_block*mz;
   const int zs = n_splines_block;
@@ -345,13 +347,12 @@ int main(int argc, char **argv) {
   // coefs layout per block is [mx, my, mz, n_splines_block], so in a flattened array:
   // coefs[ix,iy,iz,ispl] = coefs[ispl + nspl*(iz + mz*(iy + my*(ix)))]
   //                             [ispl + iz*nspl + iy*nspl*mz + iz*my*mz*nspl]
-  auto s = SplineType {  n_splines_block*(nz+3)*(ny+3), n_splines_block*(nz+3), n_splines_block,
+  auto s = SplineType {  xs, ys, zs,
                          Ugrid{ l_start[0], l_end[0], l_num[0], l_delta[0], l_delta_inv[0] },
                          Ugrid{ l_start[1], l_end[1], l_num[1], l_delta[1], l_delta_inv[1] },
                          Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
                       } ;  
 
-  auto start = std::chrono::system_clock::now();
 
   double nflop = 1.*nwalker*nelectrons*nblock*(252+665*n_splines_block);
 
@@ -361,8 +362,6 @@ int main(int argc, char **argv) {
    * (float) electron_pos : 3 * nelectrons
    * (float) vals         : nelectrons*
    */
-
-  // Kernel
   float* __restrict__ pt_vals = vals.data();
   float* __restrict__ pt_grads = grads.data();
   float* __restrict__ pt_hess = hess.data();
@@ -370,56 +369,30 @@ int main(int argc, char **argv) {
   const float* __restrict__ e_x = electron_pos_x.data();
   const float* __restrict__ e_y = electron_pos_y.data();
   const float* __restrict__ e_z = electron_pos_z.data();
-  #pragma omp target enter data map(to: s,\
-                                        pt_coefs[0:n_coef],\
-                                        e_x[0:nwalker*nelectrons],\
-                                        e_y[0:nwalker*nelectrons],\
-                                        e_z[0:nwalker*nelectrons])\
-                                    map(alloc:\
-                                        pt_vals[0:nwalker*n_splines*nelectrons],\
-                                        pt_grads[0:nwalker*n_splines*nelectrons*3],\
-                                        pt_hess[0:nwalker*n_splines*nelectrons*6],\
-)
+  auto start = std::chrono::system_clock::now();
+  // Kernel
+  #pragma omp target enter data map(to: s, pt_coefs[0:n_coef],\
+        e_x[0:nwalker*nelectrons], e_y[0:nwalker*nelectrons], e_z[0:nwalker*nelectrons])\
+     map(alloc: pt_vals[0:nwalker*n_splines*nelectrons],\
+        pt_grads[0:nwalker*n_splines*nelectrons*3], pt_hess[0:nwalker*n_splines*nelectrons*6])
   #pragma omp target teams distribute parallel for collapse(3)
-  for (int iwalker=0; iwalker< nwalker; iwalker++) {
-    //nelectrons*nblock*(cLAndF + 102 + 665*n_splines_block)
-    //nelectrons*nblock*(252 + 665*n_splines_block)
-    // loop over electrons
-    for (int e=0 ; e < nelectrons ; e++){
-      // loop over blocks
-//  #pragma omp target map(to: s,\
-//                                        pt_vals[0:nwalker*n_splines*nelectrons],\
-//                                        pt_grads[0:nwalker*n_splines*nelectrons*3],\
-//                                        pt_hess[0:nwalker*n_splines*nelectrons*6],\
-//                                        pt_coefs[0:n_coef],\
-//                                        e_x[0:nwalker*nelectrons],\
-//                                        e_y[0:nwalker*nelectrons],\
-//                                        e_z[0:nwalker*nelectrons],\
-//)
+  for (int iwalker=0; iwalker < nwalker; iwalker++) {
+    int e0 = nelectrons * iwalker;
+    for (int e=e0 ; e < e0 + nelectrons ; e++){
       for (int b=0; b < nblock; b++) {
-        int block_idx_start = b*n_splines_block;
-        //transfer: 1 spline, coef block, elec pos (3), vgh block
-        //const float* __restrict__ pt_vals = vals[e+nelectrons*iwalker].data()+block_idx_start;
-  //      #pragma omp target enter data map(to: pt_vals[0:n_splines_block])
-        evaluate_vgh(&s, pt_coefs+block_idx_start*ngridpts,
-            *(e_x+e+nelectrons*iwalker),
-            *(e_y+e+nelectrons*iwalker),
-            *(e_z+e+nelectrons*iwalker),
-            //electron_pos_x[e+nelectrons*iwalker],
-            //electron_pos_y[e+nelectrons*iwalker],
-            //electron_pos_z[e+nelectrons*iwalker],
-            pt_vals+(e+nelectrons*iwalker)*n_splines+block_idx_start,
-            pt_grads+(e+nelectrons*iwalker)*n_splines*3+3*block_idx_start,
-            pt_hess+(e+nelectrons*iwalker)*n_splines*6+6*block_idx_start,
+        int block_idx_start = b * n_splines_block;
+        evaluate_vgh(&s,
+            pt_coefs + block_idx_start * ngridpts,
+            *(e_x + e), *(e_y + e), *(e_z + e),
+            pt_vals  +  e * n_splines + block_idx_start,
+            pt_grads + (e * n_splines + block_idx_start) * 3,
+            pt_hess  + (e * n_splines + block_idx_start) * 6,
             n_splines_block);
-       //#pragma omp target update from(pt_vals[0:n_splines_block])
       }
     }
   }
-  #pragma omp target exit data map(from: \
-                                         pt_vals[0:nwalker*n_splines*nelectrons],\
-                                         pt_grads[0:nwalker*n_splines*nelectrons*3],\
-                                         pt_hess[0:nwalker*n_splines*nelectrons*6])
+  #pragma omp target exit data map(from: pt_vals[0:nwalker*n_splines*nelectrons],\
+         pt_grads[0:nwalker*n_splines*nelectrons*3], pt_hess[0:nwalker*n_splines*nelectrons*6])
   auto end = std::chrono::system_clock::now();
   double walltime = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
   std::cout << "flop count: " << nflop << std::endl;
@@ -428,16 +401,16 @@ int main(int argc, char **argv) {
   for (int i=0; i<nelectrons*nwalker; i+=nelectrons){
     for (int j=0; j<nelectrons; j++){
       assert(std::accumulate(vals.begin()+(i+j)*n_splines, 
-                                               vals.begin()+(i+j+1)*n_splines, 0.) < std::numeric_limits<float>::epsilon());
+                             vals.begin()+(i+j+1)*n_splines, 0.) < std::numeric_limits<float>::epsilon());
       assert(std::accumulate(grads.begin()+(i+j)*n_splines*3,
-                                               grads.begin()+(i+j+1)*n_splines*3, 0.) < std::numeric_limits<float>::epsilon());
+                             grads.begin()+(i+j+1)*n_splines*3, 0.) < std::numeric_limits<float>::epsilon());
       assert(std::accumulate(hess.begin()+(i+j)*n_splines*6,
-                                               hess.begin()+(i+j+1)*n_splines*6, 0.) < std::numeric_limits<float>::epsilon());
+                             hess.begin()+(i+j+1)*n_splines*6, 0.) < std::numeric_limits<float>::epsilon());
     }
   }
-  bool valnonzero = std::any_of(vals.begin(), vals.end(), [](float i) { return fabs(i) > std::numeric_limits<float>::epsilon() ; });
+  bool valnonzero =   std::any_of(vals.begin(),  vals.end(), [](float i) { return fabs(i) > std::numeric_limits<float>::epsilon() ; });
   bool gradsnonzero = std::any_of(grads.begin(), grads.end(), [](float i) { return fabs(i) > std::numeric_limits<float>::epsilon() ; });
-  bool hessnonzero = std::any_of(hess.begin(), hess.end(), [](float i) { return fabs(i) > std::numeric_limits<float>::epsilon() ; });
+  bool hessnonzero =  std::any_of(hess.begin(),  hess.end(), [](float i) { return fabs(i) > std::numeric_limits<float>::epsilon() ; });
   assert(valnonzero);
   assert(gradsnonzero);
   assert(hessnonzero);
