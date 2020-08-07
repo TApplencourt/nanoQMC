@@ -155,7 +155,27 @@ inline void evalute_kernel( const float* __restrict__ coefs_m,
   float* __restrict__ hyy = hess + 3 * n_splines_local;
   float* __restrict__ hyz = hess + 4 * n_splines_local;
   float* __restrict__ hzz = hess + 5 * n_splines_local;
+ 
+
+  for (int i = 0; i < 4; i++)
+  for (int j = 0; j < 4; j++)
+  {
+        const float* __restrict__ coefs =  coefs_m + ((ix + i) * xs + (iy + j) * ys + iz * zs);
+        const float* __restrict__ coefszs = coefs + zs;
+        const float* __restrict__ coefs2zs = coefs + 2 * zs;
+        const float* __restrict__ coefs3zs = coefs + 3 * zs;
+
+        float coefsv    = coefs[n];
+        float coefsvzs  = coefszs[n];
+        float coefsv2zs = coefs2zs[n];
+        float coefsv3zs = coefs3zs[n];
+
+        float a_sum0[4][4] = c[0] * coefsv +   c[1] * coefsvzs +   c[2] * coefsv2zs +   c[3] * coefsv3zs; 
+        float a_sum1[4][4] = dc[0] * coefsv +  dc[1] * coefsvzs +  dc[2] * coefsv2zs +  dc[3] * coefsv3zs; 
+        float a_sum2[4][4] = d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
+  }
   
+ 
   for (int n = 0; n < n_splines_local; n++){
     float vi{};
     float gxi{};
@@ -171,23 +191,9 @@ inline void evalute_kernel( const float* __restrict__ coefs_m,
     for (int i = 0; i < 4; i++)
       for (int j = 0; j < 4; j++)
       {
-        //  flop: 41*n_splines
-        // read: 4?
-        const float* __restrict__ coefs =  coefs_m + ((ix + i) * xs + (iy + j) * ys + iz * zs);
-        const float* __restrict__ coefszs = coefs + zs;
-        const float* __restrict__ coefs2zs = coefs + 2 * zs;
-        const float* __restrict__ coefs3zs = coefs + 3 * zs;
-
-        float coefsv    = coefs[n];
-        float coefsvzs  = coefszs[n];
-        float coefsv2zs = coefs2zs[n];
-        float coefsv3zs = coefs3zs[n];
-
-        //  flop: 21
-        //  read: 12?
-        float sum0 = a_sum0[i][j] ; //  c[0] * coefsv +   c[1] * coefsvzs +   c[2] * coefsv2zs +   c[3] * coefsv3zs;
-        float sum1 = a_sum1[i][j] ; //dc[0] * coefsv +  dc[1] * coefsvzs +  dc[2] * coefsv2zs +  dc[3] * coefsv3zs;
-        float sum2 = a_sum2[i][j] ; //d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
+        float sum0 = a_sum0[i][j] ; 
+        float sum1 = a_sum1[i][j] ;
+        float sum2 = a_sum2[i][j] ;
 
         //  flop: 20
         //  read: 10?
@@ -203,8 +209,6 @@ inline void evalute_kernel( const float* __restrict__ coefs_m,
         hyzi += a_pre01[i][j] * sum1;
         hzzi += a_pre00[i][j] * sum2;
       }
-
-
     vals[n] = vi;
     gx[n]   = gxi;
     gy[n]   = gyi;
