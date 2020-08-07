@@ -8,6 +8,25 @@
 #include "cxxopts.hpp"
 #include <chrono>
 
+template<typename T>
+std::ostream& operator<< (std::ostream& out, const std::vector<T>& v)
+{
+  if(!v.empty()){
+    out << "[";
+    std::copy(v.begin(),v.end(),std::ostream_iterator<T>(out, ", "));
+    out << "\b\b]";
+  }
+  return out;
+}
+
+template<typename T>
+std::vector<T> slice(std::vector<T> &v, int i0, int i1)
+{
+  std::vector<T> v2(i1-i0+1);
+  std::copy(v.begin()+i0,v.begin()+i1+1,v2.begin());
+  return v2;
+}
+
 struct Ugrid
 {
   double start, end;
@@ -50,7 +69,8 @@ inline void getSplineBound(T x, TRESIDUAL& dx, int& ind, int nmax)
 template<typename T>
 inline static void compute_prefactors(T a[4], T da[4], T d2a[4], T tx)
 {
-  //48 total
+  // flop: 48 total
+  // 12 write?
   static constexpr T A00 = -1.0/6.0, A01 =  3.0/6.0, A02 = -3.0/6.0, A03 = 1.0/6.0;
   static constexpr T A10 =  3.0/6.0, A11 = -6.0/6.0, A12 =  0.0/6.0, A13 = 4.0/6.0;
   static constexpr T A20 = -3.0/6.0, A21 =  3.0/6.0, A22 =  3.0/6.0, A23 = 1.0/6.0;
@@ -84,20 +104,18 @@ inline void computeLocationAndFractional(
     int& ix, int& iy, int& iz, T a[4], T b[4], T c[4], T da[4], T db[4], T dc[4], T d2a[4],
     T d2b[4], T d2c[4])
 {
-  //150 total?
-  //3?
+  // flop:150?
+  // write: 36? 0?
   x -= spline_m->x_grid.start;
   y -= spline_m->y_grid.start;
   z -= spline_m->z_grid.start;
 
   T tx, ty, tz;
 
-  //3?
   getSplineBound(x * spline_m->x_grid.delta_inv, tx, ix, spline_m->x_grid.num - 1);
   getSplineBound(y * spline_m->y_grid.delta_inv, ty, iy, spline_m->y_grid.num - 1);
   getSplineBound(z * spline_m->z_grid.delta_inv, tz, iz, spline_m->z_grid.num - 1);
 
-  //144
   compute_prefactors(a, da, d2a, tx);
   compute_prefactors(b, db, d2b, ty);
   compute_prefactors(c, dc, d2c, tz);
@@ -116,9 +134,11 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   int ix, iy, iz;
   float a[4], b[4], c[4], da[4], db[4], dc[4], d2a[4], d2b[4], d2c[4];
 
-  // cLAndF(150?) + 102 + 665*n_splines
+  //  flop: cLAndF(150?) + 102 + 665*n_splines_local
+  //  read: cLandF(0?) + 16*(12 + 26 * n_splines_local) + 9 * n_splines_local
+  //                 192 + 425* n_splines_local
+  // write: cLandF(36?) + 179 * n_splines_local
 
-  //150?
   computeLocationAndFractional(spline_m, x, y, z, ix, iy, iz, a, b, c, da, db, dc, d2a, d2b, d2c);
 
   const intptr_t xs = spline_m->x_stride;
@@ -128,12 +148,11 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
 
   // gx,gy,gz each size [n_splines_local]
   // grads = [gx,gy,gz]
-  // 3(ptr)
+  // hess = [hxx,hxy,hxz,hyy,hyz,hzz]
   float* __restrict__ gx = grads;
   float* __restrict__ gy = grads + n_splines_local;
   float* __restrict__ gz = grads + 2 * n_splines_local;
 
-  // 9(ptr)
   float* __restrict__ hxx = hess;
   float* __restrict__ hxy = hess + n_splines_local;
   float* __restrict__ hxz = hess + 2 * n_splines_local;
@@ -141,25 +160,28 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   float* __restrict__ hyz = hess + 4 * n_splines_local;
   float* __restrict__ hzz = hess + 5 * n_splines_local;
 
+  // write: 10 * n_splines_local
   std::fill(vals, vals+n_splines_local, float());
   std::fill(grads, grads+3*n_splines_local, float());
   std::fill(hess, hess+6*n_splines_local, float());
-  // 16*(6+41*n_splines)
-  // 96 + 656*n_splines
+
+  //  flop: 16 * (6 + 41 * n_splines)
+  //  read: 16 * (12 + n_splines * (4+12+10))
+  // write: 16 * n_splines * 10
   // TODO: use device pointer?
   //       for coefs_m pass address of coefs_m[0] and data from range used
+  // explicit outer loops over x and y, unroll inner loop over z
   for (int i = 0; i < 4; i++)
     for (int j = 0; j < 4; j++)
     {
-      // 13(ptr)
       // coefs has dims [ nx+3, ny+3, nz+3, n_splines_local ]
-      // explicit outer loops over x and y, unroll inner loop over z
       const float* __restrict__ coefs =  coefs_m + ((ix + i) * xs + (iy + j) * ys + iz * zs);
       const float* __restrict__ coefszs = coefs + zs;
       const float* __restrict__ coefs2zs = coefs + 2 * zs;
       const float* __restrict__ coefs3zs = coefs + 3 * zs;
 
-      // 6
+      //  flop: 6
+      //  read: 12?
       const float pre20 = d2a[i] * b[j];
       const float pre10 = da[i] * b[j];
       const float pre00 = a[i] * b[j];
@@ -167,37 +189,41 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
       const float pre01 = a[i] * db[j];
       const float pre02 = a[i] * d2b[j];
 
-      //41*n_splines
+      //  flop: 41*n_splines
       for (int n = 0; n < n_splines_local; n++)
       {
-       float coefsv    = coefs[n];
-       float coefsvzs  = coefszs[n];
-       float coefsv2zs = coefs2zs[n];
-       float coefsv3zs = coefs3zs[n];
+        // read: 4?
+        float coefsv    = coefs[n];
+        float coefsvzs  = coefszs[n];
+        float coefsv2zs = coefs2zs[n];
+        float coefsv3zs = coefs3zs[n];
 
-       // 21
-       float sum0 = c[0] * coefsv + c[1] * coefsvzs + c[2] * coefsv2zs + c[3] * coefsv3zs;
-       float sum1 = dc[0] * coefsv + dc[1] * coefsvzs + dc[2] * coefsv2zs + dc[3] * coefsv3zs;
-       float sum2 = d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
+        //  flop: 21
+        //  read: 12?
+        float sum0 = c[0] * coefsv + c[1] * coefsvzs + c[2] * coefsv2zs + c[3] * coefsv3zs;
+        float sum1 = dc[0] * coefsv + dc[1] * coefsvzs + dc[2] * coefsv2zs + dc[3] * coefsv3zs;
+        float sum2 = d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
 
-       // 20
-       vals[n] += pre00 * sum0;
-       gx[n] += pre10 * sum0;
-       gy[n] += pre01 * sum0;
-       gz[n] += pre00 * sum1;
-       hxx[n] += pre20 * sum0;
-       hxy[n] += pre11 * sum0;
-       hxz[n] += pre10 * sum1;
-       hyy[n] += pre02 * sum0;
-       hyz[n] += pre01 * sum1;
-       hzz[n] += pre00 * sum2;
+        //  flop: 20
+        //  read: 10?
+        // write: 10?
+        vals[n] += pre00 * sum0;
+        gx[n] += pre10 * sum0;
+        gy[n] += pre01 * sum0;
+        gz[n] += pre00 * sum1;
+        hxx[n] += pre20 * sum0;
+        hxy[n] += pre11 * sum0;
+        hxz[n] += pre10 * sum1;
+        hyy[n] += pre02 * sum0;
+        hyz[n] += pre01 * sum1;
+        hzz[n] += pre00 * sum2;
       }
     }
 
   const float dxInv = spline_m->x_grid.delta_inv;
   const float dyInv = spline_m->y_grid.delta_inv;
   const float dzInv = spline_m->z_grid.delta_inv;
-  // 6
+  //  flop: 6
   const float dxx   = dxInv * dxInv;
   const float dxy   = dxInv * dyInv;
   const float dxz   = dxInv * dzInv;
@@ -205,7 +231,9 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   const float dyz   = dyInv * dzInv;
   const float dzz   = dzInv * dzInv;
 
-  //9*n_splines
+  //  flop: 9*n_splines
+  //  read: 9*n_splines?
+  // write: 9*n_splines?
   for (size_t n = 0; n < n_splines_local; n++)
   {
     gx[n] *= dxInv;
@@ -256,6 +284,7 @@ int main(int argc, char **argv) {
   const int nelectrons =  result["e"].as<int>();
   const int nwalker = result["n"].as<int>();
 
+  assert(nelectrons % 2 == 0);
   //Declaration
   const int norb = nelectrons  / 2;
   const int n_splines = norb;
@@ -354,7 +383,9 @@ int main(int argc, char **argv) {
                       } ;  
 
 
-  double nflop = 1.*nwalker*nelectrons*nblock*(252+665*n_splines_block);
+  double nflop = 1.*nwalker*nelectrons*(252*nblock+665*n_splines);
+  double nread = 1.*nwalker*nelectrons*(192*nblock+425*n_splines);
+  double nwrite= 1.*nwalker*nelectrons*(36*nblock+179*n_splines);
 
   /*
    * sizes:
@@ -370,18 +401,15 @@ int main(int argc, char **argv) {
   const float* __restrict__ e_y = electron_pos_y.data();
   const float* __restrict__ e_z = electron_pos_z.data();
   // dummy loop to do clLinkProgram outside of timer bounds below
-  {
-    #pragma omp target
-    for (int i=0; i<1; i++){
-      continue;
-    }
-  }
-  auto start = std::chrono::system_clock::now();
+  
+   #pragma omp target
+    {}
   // Kernel
   #pragma omp target enter data map(to: s, pt_coefs[0:n_coef],\
             e_x[0:nwalker*nelectrons], e_y[0:nwalker*nelectrons], e_z[0:nwalker*nelectrons])\
      map(alloc: pt_vals[0:nwalker*n_splines*nelectrons],\
             pt_grads[0:nwalker*n_splines*nelectrons*3], pt_hess[0:nwalker*n_splines*nelectrons*6])
+  auto start = std::chrono::system_clock::now();
   #pragma omp target teams distribute parallel for collapse(3)
   for (int iwalker=0; iwalker < nwalker; iwalker++) {
     for (int ei=0 ; ei < nelectrons ; ei++){
@@ -398,23 +426,41 @@ int main(int argc, char **argv) {
       }
     }
   }
+  auto end = std::chrono::system_clock::now();
   #pragma omp target exit data map(from: pt_vals[0:nwalker*n_splines*nelectrons],\
          pt_grads[0:nwalker*n_splines*nelectrons*3], pt_hess[0:nwalker*n_splines*nelectrons*6])
-  auto end = std::chrono::system_clock::now();
   double walltime = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-  std::cout << "flop count: " << nflop << std::endl;
+  std::cout << " flop count: " << nflop << std::endl;
+  std::cout << " read count: " << nread*4 << std::endl;
+  std::cout << "write count: " << nwrite*4 << std::endl;
+  std::cout << "flop/byte: " << nflop/(4.*(nwrite+nread)) << std::endl;
   std::cout << "time: " << walltime << " ns" << std::endl;
   std::cout << "GFLOPS: " << nflop/walltime << std::endl;
-  for (int i=0; i<nelectrons*nwalker; i+=nelectrons){
-    for (int j=0; j<nelectrons; j++){
-      assert(std::accumulate(vals.begin()+(i+j)*n_splines, 
-                             vals.begin()+(i+j+1)*n_splines, 0.) < std::numeric_limits<float>::epsilon());
-      assert(std::accumulate(grads.begin()+(i+j)*n_splines*3,
-                             grads.begin()+(i+j+1)*n_splines*3, 0.) < std::numeric_limits<float>::epsilon());
-      assert(std::accumulate(hess.begin()+(i+j)*n_splines*6,
-                             hess.begin()+(i+j+1)*n_splines*6, 0.) < std::numeric_limits<float>::epsilon());
-    }
-  }
+  //for (int i=0; i<nelectrons*nwalker; i+=nelectrons){
+  //  for (int j=0; j<nelectrons; j++){
+  //    float vgh_tot[3];
+  //    vgh_tot[0] = std::accumulate(vals.begin()+(i+j)*n_splines,
+  //        vals.begin()+(i+j+1)*n_splines, 0.);
+  //    vgh_tot[1] = std::accumulate(grads.begin()+(i+j)*n_splines*3,
+  //        grads.begin()+(i+j+1)*n_splines*3, 0.);
+  //    vgh_tot[2] = std::accumulate(hess.begin()+(i+j)*n_splines*6,
+  //        hess.begin()+(i+j+1)*n_splines*6, 0.);
+  //    for (int k=0; k<3; k++){
+  //      if (vgh_tot[k] > std::numeric_limits<float>::epsilon()){
+  //        std::cout << i << " " << j << " " << k << " " << " " << vgh_tot[k] << std::endl;
+  //        switch(k){
+  //          case 0:
+  //            std::cout << slice(vals,(i+j)*n_splines,(i+j+1)*n_splines) << std::endl;
+  //          case 1:
+  //            std::cout << slice(grads,(i+j)*n_splines*3,(i+j+1)*n_splines*3) << std::endl;
+  //          case 2:
+  //            std::cout << slice(hess,(i+j)*n_splines*6,(i+j+1)*n_splines*6) << std::endl;
+  //        }
+  //      }
+  //    }
+  //  }
+  //}
+
   bool valnonzero =   std::any_of(vals.begin(),  vals.end(), [](float i) { return fabs(i) > std::numeric_limits<float>::epsilon() ; });
   bool gradsnonzero = std::any_of(grads.begin(), grads.end(), [](float i) { return fabs(i) > std::numeric_limits<float>::epsilon() ; });
   bool hessnonzero =  std::any_of(hess.begin(),  hess.end(), [](float i) { return fabs(i) > std::numeric_limits<float>::epsilon() ; });
