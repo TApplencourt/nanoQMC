@@ -184,27 +184,37 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   //       for coefs_m pass address of coefs_m[0] and data from range used
   // explicit outer loops over x and y, unroll inner loop over z
   //#pragma omp parallel for  
-  for (int n = 0; n < n_splines_local; n++)
+  for (int n = 0; n < n_splines_local; n++){
+    float vi{};
+    float gxi{};
+    float gyi{};
+    float gzi{};
+    float hxxi{};
+    float hxyi{};
+    float hxzi{};
+    float hyyi{};
+    float hyzi{};
+    float hzzi{};
+
+    for (int i = 0; i < 4; i++)
+      for (int j = 0; j < 4; j++)
       {
-  for (int i = 0; i < 4; i++)
-    for (int j = 0; j < 4; j++)
-    {
-      // coefs has dims [ nx+3, ny+3, nz+3, n_splines_local ]
-      const float* __restrict__ coefs =  coefs_m + ((ix + i) * xs + (iy + j) * ys + iz * zs);
-      const float* __restrict__ coefszs = coefs + zs;
-      const float* __restrict__ coefs2zs = coefs + 2 * zs;
-      const float* __restrict__ coefs3zs = coefs + 3 * zs;
+        // coefs has dims [ nx+3, ny+3, nz+3, n_splines_local ]
+        const float* __restrict__ coefs =  coefs_m + ((ix + i) * xs + (iy + j) * ys + iz * zs);
+        const float* __restrict__ coefszs = coefs + zs;
+        const float* __restrict__ coefs2zs = coefs + 2 * zs;
+        const float* __restrict__ coefs3zs = coefs + 3 * zs;
 
-      //  flop: 6
-      //  read: 12?
-      const float pre00 =   a[i] *   b[j];
-      const float pre01 =   a[i] *  db[j];
-      const float pre02 =   a[i] * d2b[j];
-      const float pre10 =  da[i] *   b[j];
-      const float pre11 =  da[i] *  db[j];
-      const float pre20 = d2a[i] *   b[j];
+        //  flop: 6
+        //  read: 12?
+        const float pre00 =   a[i] *   b[j];
+        const float pre01 =   a[i] *  db[j];
+        const float pre02 =   a[i] * d2b[j];
+        const float pre10 =  da[i] *   b[j];
+        const float pre11 =  da[i] *  db[j];
+        const float pre20 = d2a[i] *   b[j];
 
-      //  flop: 41*n_splines
+        //  flop: 41*n_splines
         // read: 4?
         float coefsv    = coefs[n];
         float coefsvzs  = coefszs[n];
@@ -220,18 +230,28 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
         //  flop: 20
         //  read: 10?
         // write: 10?
-        vals[n] += pre00 * sum0;
-        gx[n]   += pre10 * sum0;
-        gy[n]   += pre01 * sum0;
-        gz[n]   += pre00 * sum1;
-        hxx[n]  += pre20 * sum0;
-        hxy[n]  += pre11 * sum0;
-        hxz[n]  += pre10 * sum1;
-        hyy[n]  += pre02 * sum0;
-        hyz[n]  += pre01 * sum1;
-        hzz[n]  += pre00 * sum2;
+        vi   += pre00 * sum0;
+        gxi  += pre10 * sum0;
+        gyi  += pre01 * sum0;
+        gzi  += pre00 * sum1;
+        hxxi += pre20 * sum0;
+        hxyi += pre11 * sum0;
+        hxzi += pre10 * sum1;
+        hyyi += pre02 * sum0;
+        hyzi += pre01 * sum1;
+        hzzi += pre00 * sum2;
       }
-    }
+    vals[n] = vi;
+    gx[n]   = gxi;
+    gy[n]   = gyi;
+    gz[n]   = gzi;
+    hxx[n]  = hxxi;
+    hxy[n]  = hxyi;
+    hxz[n]  = hxzi;
+    hyy[n]  = hyyi;
+    hyz[n]  = hyzi;
+    hzz[n]  = hzzi;
+  }
 }
 
 int main(int argc, char **argv) {
