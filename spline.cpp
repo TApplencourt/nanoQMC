@@ -199,7 +199,7 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
       const float prevals = pre00;
       const float pregx   = dxInv * pre10;
       const float pregy   = dyInv * pre01;
-      const float pregz   = dzInv * pre01;
+      const float pregz   = dzInv * pre00;
       const float prehxx  = dxInv * dxInv * pre20;
       const float prehxy  = dxInv * dyInv * pre11;
       const float prehxz  = dxInv * dzInv * pre10;
