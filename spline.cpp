@@ -189,23 +189,12 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
 
       //  flop: 6
       //  read: 12?
-      const float pre20 = d2a[i] * b[j];
-      const float pre10 = da[i] * b[j];
-      const float pre00 = a[i] * b[j];
-      const float pre11 = da[i] * db[j];
-      const float pre01 = a[i] * db[j];
-      const float pre02 = a[i] * d2b[j];
-
-      const float prevals = pre00;
-      const float pregx   = dxInv * pre10;
-      const float pregy   = dyInv * pre01;
-      const float pregz   = dzInv * pre00;
-      const float prehxx  = dxInv * dxInv * pre20;
-      const float prehxy  = dxInv * dyInv * pre11;
-      const float prehxz  = dxInv * dzInv * pre10;
-      const float prehyy  = dyInv * dyInv * pre02;
-      const float prehyz  = dyInv * dzInv * pre01;
-      const float prehzz  = dzInv * dzInv * pre00;
+      const float pre00 =   a[i] *   b[j];
+      const float pre01 =   a[i] *  db[j] * dyInv;
+      const float pre02 =   a[i] * d2b[j] * dyInv * dyInv;
+      const float pre10 =  da[i] *   b[j] * dxInv;
+      const float pre11 =  da[i] *  db[j] * dxInv * dyInv;
+      const float pre20 = d2a[i] *   b[j] * dxInv * dxInv;
 
       //  flop: 41*n_splines
         // read: 4?
@@ -216,23 +205,23 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
 
         //  flop: 21
         //  read: 12?
-        float sum0 = c[0] * coefsv + c[1] * coefsvzs + c[2] * coefsv2zs + c[3] * coefsv3zs;
-        float sum1 = dc[0] * coefsv + dc[1] * coefsvzs + dc[2] * coefsv2zs + dc[3] * coefsv3zs;
-        float sum2 = d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
+        float sum0 =    c[0] * coefsv +   c[1] * coefsvzs +   c[2] * coefsv2zs +   c[3] * coefsv3zs;
+        float sum1 =  (dc[0] * coefsv +  dc[1] * coefsvzs +  dc[2] * coefsv2zs +  dc[3] * coefsv3zs) * dzInv;
+        float sum2 = (d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs) * dzInv * dzInv;
 
         //  flop: 20
         //  read: 10?
         // write: 10?
-        vals[n] += prevals * sum0;
-        gx[n]   += pregx   * sum0;
-        gy[n]   += pregy   * sum0;
-        gz[n]   += pregz   * sum1;
-        hxx[n]  += prehxx  * sum0;
-        hxy[n]  += prehxy  * sum0;
-        hxz[n]  += prehxz  * sum1;
-        hyy[n]  += prehyy  * sum0;
-        hyz[n]  += prehyz  * sum1;
-        hzz[n]  += prehzz  * sum2;
+        vals[n] += pre00 * sum0;
+        gx[n]   += pre10 * sum0;
+        gy[n]   += pre01 * sum0;
+        gz[n]   += pre00 * sum1;
+        hxx[n]  += pre20 * sum0;
+        hxy[n]  += pre11 * sum0;
+        hxz[n]  += pre10 * sum1;
+        hyy[n]  += pre02 * sum0;
+        hyz[n]  += pre01 * sum1;
+        hzz[n]  += pre00 * sum2;
       }
     }
 }
