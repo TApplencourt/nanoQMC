@@ -163,6 +163,14 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
   const float dxInv = spline_m->x_grid.delta_inv;
   const float dyInv = spline_m->y_grid.delta_inv;
   const float dzInv = spline_m->z_grid.delta_inv;
+  for (int i = 0; i < 4; i++){
+     da[i] *= dxInv;
+     db[i] *= dyInv;
+     dc[i] *= dzInv;
+    d2a[i] *= dxInv * dxInv;
+    d2b[i] *= dyInv * dyInv;
+    d2c[i] *= dzInv * dzInv;
+  }
 
   // write: 10 * n_splines_local
   std::fill(vals, vals+n_splines_local, float());
@@ -190,11 +198,11 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
       //  flop: 6
       //  read: 12?
       const float pre00 =   a[i] *   b[j];
-      const float pre01 =   a[i] *  db[j] * dyInv;
-      const float pre02 =   a[i] * d2b[j] * dyInv * dyInv;
-      const float pre10 =  da[i] *   b[j] * dxInv;
-      const float pre11 =  da[i] *  db[j] * dxInv * dyInv;
-      const float pre20 = d2a[i] *   b[j] * dxInv * dxInv;
+      const float pre01 =   a[i] *  db[j];
+      const float pre02 =   a[i] * d2b[j];
+      const float pre10 =  da[i] *   b[j];
+      const float pre11 =  da[i] *  db[j];
+      const float pre20 = d2a[i] *   b[j];
 
       //  flop: 41*n_splines
         // read: 4?
@@ -205,9 +213,9 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
 
         //  flop: 21
         //  read: 12?
-        float sum0 =    c[0] * coefsv +   c[1] * coefsvzs +   c[2] * coefsv2zs +   c[3] * coefsv3zs;
-        float sum1 =  (dc[0] * coefsv +  dc[1] * coefsvzs +  dc[2] * coefsv2zs +  dc[3] * coefsv3zs) * dzInv;
-        float sum2 = (d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs) * dzInv * dzInv;
+        float sum0 =   c[0] * coefsv +   c[1] * coefsvzs +   c[2] * coefsv2zs +   c[3] * coefsv3zs;
+        float sum1 =  dc[0] * coefsv +  dc[1] * coefsvzs +  dc[2] * coefsv2zs +  dc[3] * coefsv3zs;
+        float sum2 = d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
 
         //  flop: 20
         //  read: 10?
