@@ -121,6 +121,7 @@ inline void computeLocationAndFractional(
   compute_prefactors(b, db, d2b, ty);
   compute_prefactors(c, dc, d2c, tz);
 }
+#pragma omp declare target
 inline void evalute_kernel( const float* __restrict__ coefs_m,
                             float a_pre00[4][4],
                             float a_pre01[4][4],
@@ -156,26 +157,7 @@ inline void evalute_kernel( const float* __restrict__ coefs_m,
   float* __restrict__ hyz = hess + 4 * n_splines_local;
   float* __restrict__ hzz = hess + 5 * n_splines_local;
  
-
-  for (int i = 0; i < 4; i++)
-  for (int j = 0; j < 4; j++)
-  {
-        const float* __restrict__ coefs =  coefs_m + ((ix + i) * xs + (iy + j) * ys + iz * zs);
-        const float* __restrict__ coefszs = coefs + zs;
-        const float* __restrict__ coefs2zs = coefs + 2 * zs;
-        const float* __restrict__ coefs3zs = coefs + 3 * zs;
-
-        float coefsv    = coefs[n];
-        float coefsvzs  = coefszs[n];
-        float coefsv2zs = coefs2zs[n];
-        float coefsv3zs = coefs3zs[n];
-
-        float a_sum0[4][4] = c[0] * coefsv +   c[1] * coefsvzs +   c[2] * coefsv2zs +   c[3] * coefsv3zs; 
-        float a_sum1[4][4] = dc[0] * coefsv +  dc[1] * coefsvzs +  dc[2] * coefsv2zs +  dc[3] * coefsv3zs; 
-        float a_sum2[4][4] = d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
-  }
-  
- 
+  //#pragma omp parallel for
   for (int n = 0; n < n_splines_local; n++){
     float vi{};
     float gxi{};
@@ -191,9 +173,22 @@ inline void evalute_kernel( const float* __restrict__ coefs_m,
     for (int i = 0; i < 4; i++)
       for (int j = 0; j < 4; j++)
       {
-        float sum0 = a_sum0[i][j] ; 
-        float sum1 = a_sum1[i][j] ;
-        float sum2 = a_sum2[i][j] ;
+        //  flop: 41*n_splines
+        // read: 4?
+        const float* __restrict__ coefs =  coefs_m + ((ix + i) * xs + (iy + j) * ys + iz * zs);
+        const float* __restrict__ coefszs = coefs + zs;
+        const float* __restrict__ coefs2zs = coefs + 2 * zs;
+        const float* __restrict__ coefs3zs = coefs + 3 * zs;
+        float coefsv    = coefs[n];
+        float coefsvzs  = coefszs[n];
+        float coefsv2zs = coefs2zs[n];
+        float coefsv3zs = coefs3zs[n];
+
+        //  flop: 21
+        //  read: 12?
+        float sum0 =   c[0] * coefsv +   c[1] * coefsvzs +   c[2] * coefsv2zs +   c[3] * coefsv3zs;
+        float sum1 =  dc[0] * coefsv +  dc[1] * coefsvzs +  dc[2] * coefsv2zs +  dc[3] * coefsv3zs;
+        float sum2 = d2c[0] * coefsv + d2c[1] * coefsvzs + d2c[2] * coefsv2zs + d2c[3] * coefsv3zs;
 
         //  flop: 20
         //  read: 10?
@@ -209,6 +204,7 @@ inline void evalute_kernel( const float* __restrict__ coefs_m,
         hyzi += a_pre01[i][j] * sum1;
         hzzi += a_pre00[i][j] * sum2;
       }
+
     vals[n] = vi;
     gx[n]   = gxi;
     gy[n]   = gyi;
@@ -218,9 +214,12 @@ inline void evalute_kernel( const float* __restrict__ coefs_m,
     hxz[n]  = hxzi;
     hyy[n]  = hyyi;
     hyz[n]  = hyzi;
+    hzz[n]  = hzzi;
   }
 }
+#pragma omp end declare target 
 
+#pragma omp declare target
 inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
                          const float* __restrict__ coefs_m,
                          const float x,
@@ -288,6 +287,7 @@ inline void evaluate_vgh(const SplineType* __restrict__ spline_m,
                  vals, grads, hess);
 
 }
+#pragma omp end declare target
 
 int main(int argc, char **argv) {
 
@@ -411,8 +411,9 @@ int main(int argc, char **argv) {
                          Ugrid{ l_start[2], l_end[2], l_num[2], l_delta[2], l_delta_inv[2] },
                       } ;  
 
+  double nflop = 1.*nelectrons*nblock*nwalker*((41*16*n_splines_block)+6*2*4+16*6+150);
 
-  double nflop = 1.*nwalker*nelectrons*(252*nblock+665*n_splines);
+  //double nflop = 1.*nwalker*nelectrons*(252*nblock+665*n_splines);
   double nread = 1.*nwalker*nelectrons*(192*nblock+425*n_splines);
   double nwrite= 1.*nwalker*nelectrons*(36*nblock+179*n_splines);
 
@@ -441,12 +442,13 @@ int main(int argc, char **argv) {
   auto start = std::chrono::system_clock::now();
   for (int ei=0 ; ei < nelectrons ; ei++){
     for (int b=0; b < nblock; b++) {
-     //#pragma omp target teams distribute parallel for
-     #pragma omp target teams distribute
+     #pragma omp target teams distribute parallel for
+     //#pragma omp target teams distribute
       for (int iwalker=0; iwalker < nwalker; iwalker++) {
         int e = ei + nelectrons * iwalker;
         int block_idx_start = b * n_splines_block;
-        evaluate_vgh(&s,
+  // nelectrons*nblock*nwalker*n_splines_local*74*4 Bytes  
+         evaluate_vgh(&s,
             pt_coefs + block_idx_start * ngridpts,
             *(e_x + e), *(e_y + e), *(e_z + e),
             pt_vals  +  e * n_splines + block_idx_start,
@@ -460,11 +462,12 @@ int main(int argc, char **argv) {
   #pragma omp target exit data map(from: pt_vals[0:nwalker*n_splines*nelectrons],\
          pt_grads[0:nwalker*n_splines*nelectrons*3], pt_hess[0:nwalker*n_splines*nelectrons*6])
   double walltime = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-  std::cout << " flop count: " << nflop << std::endl;
-  std::cout << " read count: " << nread*4 << std::endl;
-  std::cout << "write count: " << nwrite*4 << std::endl;
-  std::cout << "read+write (GB): " << (nread+nwrite)*4./(1024*1024*1024) << std::endl;
-  std::cout << "flop/byte: " << nflop/(4.*(nwrite+nread)) << std::endl;
+  //std::cout << " flop count: " << nflop << std::endl;
+  //std::cout << " read count: " << nread*4 << std::endl;
+  //std::cout << "write count: " << nwrite*4 << std::endl;
+  //std::cout << "read+write (GB): " << (nread+nwrite)*4./(1024*1024*1024) << std::endl;
+  //std::cout << "flop/byte: " << nflop/(4.*(nwrite+nread)) << std::endl;
+  std::cout << "flop/byte: " << nflop/(nelectrons*nblock*nwalker*n_splines_block*74*4) << std::endl;
   std::cout << "time: " << walltime* 1E-9 << " s" << std::endl;
   std::cout << "GFLOPS: " << nflop/walltime << std::endl;
   for (int i=0; i<nelectrons*nwalker; i+=nelectrons){
